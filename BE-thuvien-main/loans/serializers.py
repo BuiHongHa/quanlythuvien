@@ -37,5 +37,8 @@ class LoanSerializer(serializers.ModelSerializer):
             details = obj.loan_details.all()
         except AttributeError:
             details = obj.loandetail_set.all()
-        titles = [detail.book.title for detail in details if getattr(detail, 'book', None)]
+        titles = [
+            f"{detail.book.title} (x{getattr(detail, 'quantity', 1)})"
+            for detail in details if getattr(detail, 'book', None)
+        ]
         return ", ".join(titles)

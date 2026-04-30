@@ -4,7 +4,7 @@ from .views import LoanView,LoanDetailView
 
 router =DefaultRouter()
 router.register(r'loans',LoanView)
-#router.register(r'loandetails',LoanDetailView)
+router.register(r'loandetails',LoanDetailView)
 urlpatterns=[
     path('',include(router.urls)),
 ]

@@ -12,6 +12,8 @@ function Register() {
     full_name: '',
     email: '',
     phone: '',
+    address: '',
+    date_of_birth: '',
   });
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -48,6 +50,9 @@ function Register() {
         password: formData.password,
         full_name: formData.full_name,
         email: formData.email,
+        phone: formData.phone,
+        address: formData.address,
+        date_of_birth: formData.date_of_birth || null,
       });
 
       clearAuthStorage();
@@ -144,6 +149,35 @@ function Register() {
               name="phone"
               placeholder="VD: 0123456789"
               value={formData.phone}
+              onChange={handleChange}
+              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
+            />
+          </div>
+
+          {/* Address */}
+          <div>
+            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
+              🏠 Địa chỉ: <span style={{ color: '#999' }}>(tuỳ chọn)</span>
+            </label>
+            <input
+              type="text"
+              name="address"
+              placeholder="VD: Hà Nội"
+              value={formData.address}
+              onChange={handleChange}
+              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
+            />
+          </div>
+
+          {/* Date of birth */}
+          <div>
+            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
+              🎂 Ngày sinh: <span style={{ color: '#999' }}>(tuỳ chọn)</span>
+            </label>
+            <input
+              type="date"
+              name="date_of_birth"
+              value={formData.date_of_birth}
               onChange={handleChange}
               style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
             />

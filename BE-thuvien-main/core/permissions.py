@@ -6,6 +6,7 @@ def _is_librarian(user):
         return False
     role = str(getattr(user, 'role', '') or '').strip().lower()
     return bool(
+        user.is_superuser or
         user.is_staff or
         role in ('librarian', 'manager', 'admin', 'staff')
     )

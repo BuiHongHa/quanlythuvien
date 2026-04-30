@@ -13,6 +13,7 @@ class Category(models.Model):
         return self.name
 class Book(models.Model):
     title = models.CharField(max_length=255, verbose_name="Tiêu đề sách")
+    author = models.CharField(max_length=255, blank=True, null=True, verbose_name="Tác giả")
     published_year = models.IntegerField(verbose_name="Năm xuất bản", null=True, blank=True)
     publisher = models.CharField(max_length=255, verbose_name="Nhà xuất bản", null=True, blank=True)
     description = models.TextField(blank=True, null=True, verbose_name="Mô tả sách")
