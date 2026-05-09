@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import './App.css';
+import { getAuthHeaders } from './auth';
 
 const API_BASE = 'http://127.0.0.1:8000/api/library';
 
@@ -34,18 +35,12 @@ function SeatBooking() {
     return reservations.filter((item) => Number(item.user) === Number(userId));
   }, [reservations, userId]);
 
-  const getAuthHeaders = () => {
-    const token = localStorage.getItem('access_token');
-    if (!token) return null;
-    return { Authorization: `Bearer ${token}` };
-  };
-
   const loadData = async () => {
     try {
       const seatPromise = axios.get(`${API_BASE}/seats/`);
-      const authHeaders = getAuthHeaders();
-      const reservationPromise = authHeaders
-        ? axios.get(`${API_BASE}/reservations/`, { headers: authHeaders })
+      const authHeaders = await getAuthHeaders();
+      const reservationPromise = authHeaders.headers.Authorization
+        ? axios.get(`${API_BASE}/reservations/`, authHeaders)
         : Promise.resolve({ data: [] });
       const [seatRes, reservationRes] = await Promise.all([seatPromise, reservationPromise]);
 
@@ -72,8 +67,8 @@ function SeatBooking() {
 
     setLoading(true);
     try {
-      const authHeaders = getAuthHeaders();
-      if (!authHeaders) {
+      const authHeaders = await getAuthHeaders();
+      if (!authHeaders.headers.Authorization) {
         setMessage({ type: 'error', text: 'Bạn cần đăng nhập trước khi đặt chỗ.' });
         setLoading(false);
         return;
@@ -104,15 +99,13 @@ function SeatBooking() {
 
   const handleStatusAction = async (reservationId, action) => {
     try {
-      const authHeaders = getAuthHeaders();
-      if (!authHeaders) {
+      const authHeaders = await getAuthHeaders();
+      if (!authHeaders.headers.Authorization) {
         setMessage({ type: 'error', text: 'Bạn cần đăng nhập trước khi thực hiện thao tác này.' });
         return;
       }
 
-      await axios.patch(`${API_BASE}/reservations/${reservationId}/${action}/`, {}, {
-        headers: authHeaders,
-      });
+      await axios.patch(`${API_BASE}/reservations/${reservationId}/${action}/`, {}, authHeaders);
       setMessage({ type: 'success', text: action === 'check_in' ? 'Check-in thành công.' : 'Check-out thành công.' });
       await loadData();
     } catch (error) {
@@ -186,34 +179,43 @@ function SeatBooking() {
           {myReservations.length === 0 ? (
             <p className="muted">Chưa có yêu cầu đặt chỗ nào.</p>
           ) : (
-            <table>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', marginTop: '15px', fontSize: '14px', lineHeight: 1.5 }}>
               <thead>
-                <tr>
-                  <th>Ghế</th>
-                  <th>Ngày</th>
-                  <th>Khung giờ</th>
-                  <th>Trạng thái</th>
-                  <th>Thao tác</th>
+                <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #ccc' }}>
+                  <th style={{ padding:'12px', minWidth:'120px' }}>Ghế</th>
+                  <th style={{ padding:'12px', minWidth:'120px' }}>Ngày đặt</th>
+                  <th style={{ padding:'12px', minWidth:'140px' }}>Khung giờ</th>
+                  <th style={{ padding:'12px', minWidth:'150px' }}>Trạng thái</th>
+                  <th style={{ padding:'12px', minWidth:'120px', textAlign:'center' }}>Thao tác</th>
                 </tr>
               </thead>
               <tbody>
-                {myReservations.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.seat}</td>
-                    <td>{item.date}</td>
-                    <td>{item.start_time} - {item.end_time}</td>
-                    <td>{item.status}</td>
-                    <td>
-                      {item.status === 'booked' && (
-                        <button className="btn-inline" onClick={() => handleStatusAction(item.id, 'check_in')}>
-                          Check-in
-                        </button>
+                {myReservations.map((item, index) => (
+                  <tr key={item.id} style={{ borderBottom: '1px solid #e6e6e6', background: index % 2 === 0 ? '#ffffff' : '#fbfbfb' }}>
+                    <td style={{ padding:'12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{item.seat || 'N/A'}</td>
+                    <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{item.date || '—'}</td>
+                    <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{item.start_time || '—'} - {item.end_time || '—'}</td>
+                    <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>
+                      {item.status === 'booked' && <span style={{ color: '#d39e00', fontWeight:'bold' }}>⏳ Chờ check-in</span>}
+                      {item.status === 'checked_in' && <span style={{ color: '#28a745', fontWeight:'bold' }}>✅ Đang sử dụng</span>}
+                      {item.status === 'completed' && <span style={{ color: '#6c757d', fontWeight:'bold' }}>🔒 Đã check-out</span>}
+                      {![ 'booked', 'checked_in', 'completed' ].includes(item.status) && (
+                        <span style={{ color: 'red', fontWeight: 'bold' }}>{item.status || 'Không xác định'}</span>
                       )}
-                      {item.status === 'checked_in' && (
-                        <button className="btn-inline" onClick={() => handleStatusAction(item.id, 'check_out')}>
-                          Check-out
-                        </button>
-                      )}
+                    </td>
+                    <td style={{ padding:'12px', textAlign:'center' }}>
+                      <div style={{ display: 'inline-flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                        {item.status === 'booked' && (
+                          <button className="btn-inline" onClick={() => handleStatusAction(item.id, 'check_in')}>
+                            Check-in
+                          </button>
+                        )}
+                        {item.status === 'checked_in' && (
+                          <button className="btn-inline" onClick={() => handleStatusAction(item.id, 'check_out')}>
+                            Check-out
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

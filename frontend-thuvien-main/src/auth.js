@@ -8,6 +8,33 @@ export function parseJwtPayload(token) {
   }
 }
 
+export function isTokenExpired(token) {
+  const payload = parseJwtPayload(token);
+  if (!payload || !payload.exp) return true;
+  return Date.now() >= payload.exp * 1000;
+}
+
+export async function refreshAccessToken() {
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (!refreshToken) return null;
+
+  try {
+    const response = await fetch('http://127.0.0.1:8000/api/token/refresh/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh: refreshToken }),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      localStorage.setItem('access_token', data.access);
+      return data.access;
+    }
+  } catch (error) {
+    console.error('Failed to refresh token:', error);
+  }
+  return null;
+}
+
 export function normalizeRole(role) {
   const value = String(role || '').trim().toLowerCase();
 
@@ -36,14 +63,22 @@ export function isAdminRole(role) {
   return normalized === 'librarian' || normalized === 'manager' || normalized === 'admin' || normalized === 'staff';
 }
 
-export function getAuthHeaders() {
-  const token = localStorage.getItem('access_token');
+export async function getAuthHeaders() {
+  let token = localStorage.getItem('access_token');
 
   if (!token) {
-    return null;
+    return {};
   }
 
-  return { Authorization: `Bearer ${token}` };
+  if (isTokenExpired(token)) {
+    token = await refreshAccessToken();
+    if (!token) {
+      clearAuthStorage();
+      return {};
+    }
+  }
+
+  return { headers: { Authorization: `Bearer ${token}` } };
 }
 
 export function clearAuthStorage() {

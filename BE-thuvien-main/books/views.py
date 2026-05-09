@@ -1,5 +1,6 @@
 from django.shortcuts import render
 from rest_framework import viewsets
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from core.permissions import IsLibrarianOrReadOnly
 from .models import Category,Book
 from .serializers import CategorySerializer,BookSerializer
@@ -14,4 +15,5 @@ class BookView(viewsets.ModelViewSet):
     queryset=Book.objects.all()
     serializer_class=BookSerializer
     permission_classes = [IsLibrarianOrReadOnly]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 

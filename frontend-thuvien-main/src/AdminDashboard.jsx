@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // Thay vì import 'jspdf-autotable';
 import { Icon } from './components/Icons';
+import { getAuthHeaders } from './auth';
 
 const VIETNAMESE_FONT_URL = 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf';
 let vietnameseFontLoaded = false;
@@ -54,6 +55,9 @@ function AdminDashboard() {
   const [reservations, setReservations] = useState([]);
   
   // State cho thanh lọc tìm kiếm
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [bookFilter, setBookFilter] = useState('');
+  const [bookCategoryFilter, setBookCategoryFilter] = useState('');
   const [filterUser, setFilterUser] = useState('');
   const [filterBook, setFilterBook] = useState('');
 
@@ -68,16 +72,18 @@ function AdminDashboard() {
   const [seatFilterZone, setSeatFilterZone] = useState('');
   const [seatFilterStatus, setSeatFilterStatus] = useState('all');
   const [seatFilterKeyword, setSeatFilterKeyword] = useState('');
+  const [reservationSearch, setReservationSearch] = useState('');
+  const [reservationStatusFilter, setReservationStatusFilter] = useState('all');
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [loanDetailFineMap, setLoanDetailFineMap] = useState({});
   const [loanDetailSaving, setLoanDetailSaving] = useState(false);
 
   // Lấy Token bảo mật
-  const getAuthHeaders = () => {
-    const token = localStorage.getItem('access_token');
-    if (!token) return {};
-    return { headers: { Authorization: `Bearer ${token}` } };
-  };
+  // const getAuthHeaders = () => {
+  //   const token = localStorage.getItem('access_token');
+  //   if (!token) return {};
+  //   return { headers: { Authorization: `Bearer ${token}` } };
+  // };
 
   // Tải dữ liệu theo Tab
   const loadData = async () => {
@@ -88,7 +94,7 @@ function AdminDashboard() {
     }
 
     try {
-      const config = getAuthHeaders();
+      const config = await getAuthHeaders();
       if (activeTab === 'BOOKS') {
         const [resBooks, resCats] = await Promise.all([
           axios.get('http://127.0.0.1:8000/api/books/books/', config),
@@ -127,10 +133,11 @@ function AdminDashboard() {
   const handleAddCategory = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
+      const config = await getAuthHeaders();
       if (editingCategoryId) {
-        await axios.patch(`http://127.0.0.1:8000/api/books/categories/${editingCategoryId}/`, categoryForm, getAuthHeaders());
+        await axios.patch(`http://127.0.0.1:8000/api/books/categories/${editingCategoryId}/`, categoryForm, config);
       } else {
-        await axios.post('http://127.0.0.1:8000/api/books/categories/', categoryForm, getAuthHeaders());
+        await axios.post('http://127.0.0.1:8000/api/books/categories/', categoryForm, config);
       }
       setMessage({ type: 'success', text: editingCategoryId ? 'Cập nhật Thể loại thành công!' : 'Thêm Thể loại thành công!' });
       setCategoryForm({ name: '', note: '' });
@@ -156,6 +163,23 @@ function AdminDashboard() {
   const handleCancelEditCategory = () => {
     setEditingCategoryId(null);
     setCategoryForm({ name: '', note: '' });
+  };
+
+  const handleDeleteCategory = async (categoryId) => {
+    const confirmed = window.confirm('Xóa thể loại sẽ không ảnh hưởng đến sách đã tồn tại. Bạn có chắc muốn tiếp tục?');
+    if (!confirmed) return;
+    setSaving(true);
+    try {
+      const config = await getAuthHeaders();
+      await axios.delete(`http://127.0.0.1:8000/api/books/categories/${categoryId}/`, config);
+      setMessage({ type: 'success', text: 'Đã xóa thể loại thành công!' });
+      loadData();
+    } catch (err) {
+      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      setMessage({ type: 'error', text: `Lỗi xóa thể loại: ${errorDetail}` });
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Sửa lại hàm Thêm Sách
@@ -193,21 +217,25 @@ function AdminDashboard() {
         formData.append('cover_image', coverImage); 
     }
 
+    // Debug: Log FormData contents
+    console.log('FormData contents:');
+    for (let [key, value] of formData.entries()) {
+        if (value instanceof File) {
+            console.log(`${key}: File(${value.name}, ${value.size} bytes)`);
+        } else {
+            console.log(`${key}: ${value}`);
+        }
+    }
+
     try {
+      const authConfig = await getAuthHeaders();
+      console.log('Auth headers:', authConfig);
       if (editingBookId) {
-        await axios.patch(`http://127.0.0.1:8000/api/books/books/${editingBookId}/`, formData, {
-          headers: { 
-              ...getAuthHeaders().headers, 
-              'Content-Type': 'multipart/form-data' 
-          }
-        });
+        console.log('PATCH to:', `http://127.0.0.1:8000/api/books/books/${editingBookId}/`);
+        await axios.patch(`http://127.0.0.1:8000/api/books/books/${editingBookId}/`, formData, authConfig);
       } else {
-        await axios.post('http://127.0.0.1:8000/api/books/books/', formData, {
-          headers: { 
-              ...getAuthHeaders().headers, 
-              'Content-Type': 'multipart/form-data' 
-          }
-        });
+        console.log('POST to:', 'http://127.0.0.1:8000/api/books/books/');
+        await axios.post('http://127.0.0.1:8000/api/books/books/', formData, authConfig);
       }
       
       setMessage({ type: 'success', text: editingBookId ? 'Cập nhật sách thành công!' : 'Thêm sách thành công!' });
@@ -218,7 +246,10 @@ function AdminDashboard() {
       loadData(); // Tải lại danh sách sách
     } catch (err) { 
       // Bắt lỗi chi tiết và in ra F12 để kiểm tra nếu còn lỗi
-      console.log("CHI TIẾT LỖI TỪ DJANGO:", err.response?.data);
+      console.log("CHI TIẾT LỖI TỪ DJANGO:", err);
+      console.log("Response data:", err.response?.data);
+      console.log("Response status:", err.response?.status);
+      console.log("Response headers:", err.response?.headers);
       const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
       setMessage({ type: 'error', text: editingBookId ? `Lỗi cập nhật sách: ${errorDetail}` : `Lỗi thêm sách: ${errorDetail}` }); 
     } finally { 
@@ -251,7 +282,8 @@ function AdminDashboard() {
   const handleAddZone = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
-      await axios.post('http://127.0.0.1:8000/api/library/zones/', zoneForm, getAuthHeaders());
+      const config = await getAuthHeaders();
+      await axios.post('http://127.0.0.1:8000/api/library/zones/', zoneForm, config);
       setMessage({ type: 'success', text: 'Thêm Khu vực thành công!' }); loadData();
     } catch (err) { setMessage({ type: 'error', text: 'Thêm Zone thất bại!' }); } finally { setSaving(false); }
   };
@@ -259,7 +291,8 @@ function AdminDashboard() {
   const handleAddSeat = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
-      await axios.post('http://127.0.0.1:8000/api/library/seats/', { ...seatForm, zone: Number(seatForm.zone) }, getAuthHeaders());
+      const config = await getAuthHeaders();
+      await axios.post('http://127.0.0.1:8000/api/library/seats/', { ...seatForm, zone: Number(seatForm.zone) }, config);
       setMessage({ type: 'success', text: 'Thêm Ghế thành công!' }); loadData();
     } catch (err) { setMessage({ type: 'error', text: 'Thêm Ghế thất bại!' }); } finally { setSaving(false); }
   };
@@ -269,7 +302,8 @@ function AdminDashboard() {
     if (!confirmed) return;
     setSaving(true);
     try {
-      await axios.delete(`http://127.0.0.1:8000/api/library/seats/${seatId}/`, getAuthHeaders());
+      const config = await getAuthHeaders();
+      await axios.delete(`http://127.0.0.1:8000/api/library/seats/${seatId}/`, config);
       setMessage({ type: 'success', text: 'Xóa ghế thành công!' });
       loadData();
     } catch (err) {
@@ -282,8 +316,9 @@ function AdminDashboard() {
 
   const handleUpdateReservation = async (id, actionType) => {
     try {
+      const config = await getAuthHeaders();
       const endpoint = actionType === 'check_in' ? 'check_in' : 'check_out';
-      await axios.patch(`http://127.0.0.1:8000/api/library/reservations/${id}/${endpoint}/`, {}, getAuthHeaders());
+      await axios.patch(`http://127.0.0.1:8000/api/library/reservations/${id}/${endpoint}/`, {}, config);
       setMessage({ type: 'success', text: `Đã cập nhật trạng thái yêu cầu thành công!` });
       loadData();
     } catch (err) {
@@ -294,10 +329,10 @@ function AdminDashboard() {
 
   const handleUpdateLoan = async (id) => {
     try {
-      await axios.patch(`http://127.0.0.1:8000/api/loans/loans/${id}/return_book/`, {}, getAuthHeaders());
+      const config = await getAuthHeaders();
+      await axios.patch(`http://127.0.0.1:8000/api/loans/loans/${id}/return_book/`, {}, config);
       setMessage({ type: 'success', text: 'Đã xác nhận trả sách và hoàn lại kho!' }); 
       
-      const config = getAuthHeaders();
       const resLoans = await axios.get('http://127.0.0.1:8000/api/loans/loans/', config);
       setLoans(resLoans.data);
 
@@ -312,7 +347,8 @@ function AdminDashboard() {
     if (!confirmed) return;
     setSaving(true);
     try {
-      await axios.delete(`http://127.0.0.1:8000/api/loans/loans/${id}/`, getAuthHeaders());
+      const config = await getAuthHeaders();
+      await axios.delete(`http://127.0.0.1:8000/api/loans/loans/${id}/`, config);
       setMessage({ type: 'success', text: 'Đã xóa phiếu mượn thành công!' });
       loadData();
     } catch (err) {
@@ -341,18 +377,19 @@ function AdminDashboard() {
     if (!selectedLoan) return;
     setLoanDetailSaving(true);
     try {
+      const config = await getAuthHeaders();
       const details = selectedLoan.loan_details || [];
       await Promise.all(details.map((detail) => {
         const nextFine = loanDetailFineMap[detail.id] ?? detail.fine_amounts ?? 0;
         return axios.patch(
           `http://127.0.0.1:8000/api/loans/loandetails/${detail.id}/`,
           { fine_amounts: Number(nextFine) || 0 },
-          getAuthHeaders()
+          config
         );
       }));
 
       if (selectedLoan.status !== 'returned') {
-        await axios.patch(`http://127.0.0.1:8000/api/loans/loans/${selectedLoan.id}/return_book/`, {}, getAuthHeaders());
+        await axios.patch(`http://127.0.0.1:8000/api/loans/loans/${selectedLoan.id}/return_book/`, {}, config);
       }
 
       setMessage({ type: 'success', text: 'Đã cập nhật chi tiết phiếu mượn thành công!' });
@@ -369,8 +406,9 @@ function AdminDashboard() {
   const handleToggleUserStatus = async (userId, currentStatus) => {
     setSaving(true);
     try {
+      const config = await getAuthHeaders();
       const newStatus = !currentStatus;
-      await axios.patch(`http://127.0.0.1:8000/api/core/users/${userId}/`, { is_active: newStatus }, getAuthHeaders());
+      await axios.patch(`http://127.0.0.1:8000/api/core/users/${userId}/`, { is_active: newStatus }, config);
       setMessage({ type: 'success', text: `Đã ${newStatus ? 'mở khóa' : 'khóa'} tài khoản thành công!` });
       loadData();
     } catch (err) {
@@ -386,7 +424,8 @@ function AdminDashboard() {
     if (!confirmed) return;
     setSaving(true);
     try {
-      await axios.delete(`http://127.0.0.1:8000/api/books/books/${bookId}/`, getAuthHeaders());
+      const config = await getAuthHeaders();
+      await axios.delete(`http://127.0.0.1:8000/api/books/books/${bookId}/`, config);
       setMessage({ type: 'success', text: 'Xóa sách thành công!' });
       loadData();
     } catch (err) {
@@ -460,6 +499,15 @@ function AdminDashboard() {
 
     if (seatFilterStatus === 'all') return matchesZone && matchesKeyword;
     return matchesZone && matchesKeyword && getSeatStatus(seat) === seatFilterStatus;
+  });
+
+  const filteredReservations = reservations.filter((reservation) => {
+    const keyword = reservationSearch.trim().toLowerCase();
+    const seatLabel = String(reservation?.seat?.seat_number || reservation?.seat || '').toLowerCase();
+    const userLabel = String(reservation?.user || '').toLowerCase();
+    const matchesKeyword = !keyword || seatLabel.includes(keyword) || userLabel.includes(keyword);
+    if (reservationStatusFilter === 'all') return matchesKeyword;
+    return matchesKeyword && reservation.status === reservationStatusFilter;
   });
 
   const handleExportSeatsExcel = () => {
@@ -619,6 +667,19 @@ function AdminDashboard() {
       setMessage({ type: 'error', text: `Lỗi xuất PDF: ${errorDetail}` });
     }
   };
+
+  const filteredCategories = categories.filter((c) => {
+    const normalizedFilter = categoryFilter.trim().toLowerCase();
+    if (!normalizedFilter) return true;
+    return String(c.id).includes(normalizedFilter) || c.name.toLowerCase().includes(normalizedFilter);
+  });
+
+  const filteredBooks = books.filter((b) => {
+    const normalizedFilter = bookFilter.trim().toLowerCase();
+    const matchesText = !normalizedFilter || String(b.id).includes(normalizedFilter) || (b.title || '').toLowerCase().includes(normalizedFilter);
+    const matchesCategory = !bookCategoryFilter || String(b.category || '').includes(bookCategoryFilter);
+    return matchesText && matchesCategory;
+  });
   // ==========================================
   // RENDER GIAO DIỆN
   // ==========================================
@@ -665,28 +726,58 @@ function AdminDashboard() {
               </form>
             </div>
             <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #eee' }}>
-              <h3>Danh sách Thể Loại</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                <h3 style={{ margin: 0 }}>Danh sách Thể Loại</h3>
+                <input
+                  type="text"
+                  placeholder="Tìm theo ID hoặc tên thể loại..."
+                  value={categoryFilter}
+                  onChange={e => setCategoryFilter(e.target.value)}
+                  style={{ flex: '1', minWidth: '220px', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+              </div>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr style={{ background: '#eee' }}><th style={{padding: '10px'}}>STT</th><th>ID</th><th>Tên Thể Loại</th><th>Mô tả</th><th>Thao tác</th></tr></thead>
+                <thead>
+                  <tr style={{ background: '#f1f1f1', borderBottom: '2px solid #ccc' }}>
+                    <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '60px' }}>STT</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '70px' }}>Mã TL</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Tên thể loại</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Ghi chú</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '130px' }}>Hành động</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {categories.map((c, index) => (
-                    <tr key={c.id} style={{ borderBottom: '1px solid #ddd' }}>
-                      <td style={{padding: '10px'}}>{index + 1}</td>
-                      <td style={{padding: '10px'}}>{c.id}</td>
-                      <td><strong>{c.name}</strong></td>
-                      <td>{c.note || 'N/A'}</td>
-                      <td style={{padding: '10px'}}>
-                        <button
-                          type="button"
-                          onClick={() => handleEditCategory(c)}
-                          disabled={saving}
-                          style={{ padding: '6px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                        >
-                          Sửa
-                        </button>
+                  {filteredCategories.map((c, index) => (
+                    <tr key={c.id} style={{ borderBottom: '1px solid #e5e5e5' }}>
+                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>{index + 1}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>{c.id}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'left' }}><strong>{c.name}</strong></td>
+                      <td style={{ padding: '10px 12px', textAlign: 'left', color: '#555' }}>{c.note || 'Không có ghi chú'}</td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                        <div style={{ display: 'inline-flex', gap: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleEditCategory(c)}
+                            disabled={saving}
+                            style={{ padding: '6px 12px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                          >
+                            Sửa
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCategory(c.id)}
+                            disabled={saving}
+                            style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                          >
+                            Xóa
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
+                  {filteredCategories.length === 0 && (
+                    <tr><td colSpan="5" style={{ padding: '16px', textAlign: 'center', color: '#666' }}>Không có thể loại phù hợp.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -703,6 +794,8 @@ function AdminDashboard() {
               <input type="number" placeholder="Năm XB..." value={bookForm.published_year} onChange={e => setBookForm({...bookForm, published_year: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
               
               <input placeholder="Nhà XB..." value={bookForm.publisher} onChange={e => setBookForm({...bookForm, publisher: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
+              
+              <textarea placeholder="Mô tả sách..." value={bookForm.description} onChange={e => setBookForm({...bookForm, description: e.target.value})} rows={4} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px', resize: 'vertical'}} />
               
               {/* Đã sửa category thành category_id */}
               <select required value={bookForm.category_id} onChange={e => setBookForm({...bookForm, category_id: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}>
@@ -733,7 +826,22 @@ function AdminDashboard() {
           <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #eee' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
               <h3 style={{ margin: 0 }}>Danh sách Sách hiện có</h3>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', width: '100%', justifyContent: 'flex-end' }}>
+                <input
+                  type="text"
+                  placeholder="Tìm theo ID hoặc tên sách..."
+                  value={bookFilter}
+                  onChange={e => setBookFilter(e.target.value)}
+                  style={{ minWidth: '220px', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                />
+                <select
+                  value={bookCategoryFilter}
+                  onChange={e => setBookCategoryFilter(e.target.value)}
+                  style={{ minWidth: '220px', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                >
+                  <option value="">-- Lọc theo thể loại --</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
                 <button onClick={handleExportBooksExcel} style={{ padding: '6px 12px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
                   Xuất Excel
                 </button>
@@ -743,35 +851,63 @@ function AdminDashboard() {
               </div>
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr style={{ background: '#eee' }}><th style={{padding: '10px'}}>STT</th><th>ID</th><th>Tên sách</th><th>Tác giả</th><th>Tồn kho</th><th>Thao tác</th></tr></thead>
+              <thead>
+                <tr style={{ background: '#f1f1f1', borderBottom: '2px solid #ccc' }}>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '60px' }}>STT</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '70px' }}>Mã sách</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>Tên sách</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '100px' }}>Ảnh bìa</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>Thể loại</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>Tác giả</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '120px' }}>Tồn kho</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '150px' }}>Hành động</th>
+                </tr>
+              </thead>
               <tbody>
-                {books.map((b, index) => (
-                  <tr key={b.id} style={{ borderBottom: '1px solid #ddd' }}>
-                    <td style={{padding: '10px', textAlign: 'center'}}>{index + 1}</td>
-                    <td style={{padding: '10px', textAlign: 'center'}}>{b.id}</td>
-                    <td style={{padding: '10px'}}><strong>{b.title}</strong></td>
-                    <td style={{padding: '10px'}}>{b.author || 'Chưa rõ'}</td>
-                    <td style={{padding: '10px', textAlign: 'center'}}>{b.available_quantity}/{b.total_quantity}</td>
-                    <td style={{padding: '10px', textAlign: 'center'}}>
-                      <button
-                        type="button"
-                        onClick={() => handleEditBook(b)}
-                        disabled={saving}
-                        style={{ marginRight: '8px', padding: '6px 12px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
-                      >
-                        Sửa
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteBook(b.id)}
-                        disabled={saving}
-                        style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
-                      >
-                        Xóa
-                      </button>
+                {filteredBooks.map((b, index) => (
+                  <tr key={b.id} style={{ borderBottom: '1px solid #e5e5e5' }}>
+                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>{index + 1}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>{b.id}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'left' }}><strong>{b.title}</strong></td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                      {b.cover_image ? (
+                        <img 
+                          src={b.cover_image} 
+                          alt="Ảnh bìa" 
+                          style={{ width: '60px', height: '80px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #ddd' }}
+                        />
+                      ) : (
+                        <span style={{ color: '#999', fontSize: '12px' }}>Không có ảnh</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '10px 12px', textAlign: 'left' }}>{b.category_name || 'Chưa chọn'}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'left' }}>{b.author || 'Chưa rõ'}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>{b.available_quantity}/{b.total_quantity}</td>
+                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                      <div style={{ display: 'inline-flex', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleEditBook(b)}
+                          disabled={saving}
+                          style={{ padding: '6px 12px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
+                        >
+                          Sửa
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBook(b.id)}
+                          disabled={saving}
+                          style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
+                        >
+                          Xóa
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
+                {filteredBooks.length === 0 && (
+                  <tr><td colSpan="8" style={{ padding: '12px', textAlign: 'center', color: '#666' }}>Không có sách phù hợp với tiêu chí tìm kiếm.</td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -888,46 +1024,68 @@ function AdminDashboard() {
 
           <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #eee', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
             <h3 style={{ borderBottom: '2px solid #b01e23', paddingBottom: '10px', color: '#b01e23' }}>3. Duyệt Yêu Cầu Chỗ Ngồi (Check-in / Check-out)</h3>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', marginTop: '15px' }}>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+              <input
+                placeholder="Tìm theo mã ghế hoặc user..."
+                value={reservationSearch}
+                onChange={(e) => setReservationSearch(e.target.value)}
+                style={{ flex: 1, minWidth: '220px', padding: '8px', border: '1px solid #ccc', borderRadius:'4px' }}
+              />
+              <select
+                value={reservationStatusFilter}
+                onChange={(e) => setReservationStatusFilter(e.target.value)}
+                style={{ minWidth: '200px', padding: '8px', border: '1px solid #ccc', borderRadius:'4px' }}
+              >
+                <option value="all">Tất cả trạng thái</option>
+                <option value="booked">Chờ check-in</option>
+                <option value="checked_in">Đang sử dụng</option>
+                <option value="completed">Đã check-out</option>
+              </select>
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', marginTop: '15px', fontSize: '14px', lineHeight: 1.5 }}>
               <thead>
-                <tr style={{ background: '#eee' }}>
-                  <th style={{padding:'10px'}}>STT</th>
-                  <th style={{padding:'10px'}}>Ghế (ID)</th>
-                  <th>Độc giả (User ID)</th>
-                  <th>Thời gian đăng ký</th>
-                  <th>Trạng thái</th>
-                  <th>Thao tác</th>
+                <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #ccc' }}>
+                  <th style={{ padding:'12px', textAlign:'center', minWidth:'60px' }}>STT</th>
+                  <th style={{ padding:'12px', minWidth:'120px' }}>Ghế</th>
+                  <th style={{ padding:'12px', minWidth:'140px' }}>Người đặt</th>
+                  <th style={{ padding:'12px', minWidth:'160px' }}>Ngày đặt</th>
+                  <th style={{ padding:'12px', minWidth:'170px' }}>Giờ sử dụng</th>
+                  <th style={{ padding:'12px', minWidth:'150px' }}>Trạng thái</th>
+                  <th style={{ padding:'12px', minWidth:'160px', textAlign:'center' }}>Hành động</th>
                 </tr>
               </thead>
               <tbody>
-                {reservations.length === 0 ? (
-                  <tr><td colSpan="6" style={{padding:'15px', textAlign:'center', color: '#777'}}>Hiện chưa có yêu cầu đặt chỗ nào.</td></tr>
+                {filteredReservations.length === 0 ? (
+                  <tr><td colSpan="7" style={{ padding:'18px', textAlign:'center', color: '#777' }}>Không có yêu cầu đặt chỗ phù hợp.</td></tr>
                 ) : (
-                  reservations.map((r, index) => (
-                    <tr key={r.id} style={{ borderBottom: '1px solid #ddd' }}>
-                      <td style={{padding:'10px'}}>{index + 1}</td>
-                      <td style={{padding:'10px', fontWeight: 'bold'}}>{r.seat?.seat_number || r.seat}</td>
-                      <td>{r.user}</td>
-                      <td>{r.date} <br/><small style={{color:'#666'}}>{r.start_time} - {r.end_time}</small></td>
-                      <td>
-                        {r.status === 'booked' && <span style={{color: '#d39e00', fontWeight:'bold'}}>⏳ Chờ Check-in</span>}
-                        {r.status === 'checked_in' && <span style={{color: '#28a745', fontWeight:'bold'}}>✅ Đang sử dụng</span>}
-                        {r.status === 'completed' && <span style={{color: '#6c757d', fontWeight:'bold'}}>🔒 Đã Check-out</span>}
+                  filteredReservations.map((r, index) => (
+                    <tr key={r.id} style={{ borderBottom: '1px solid #e6e6e6', background: index % 2 === 0 ? '#ffffff' : '#fbfbfb' }}>
+                      <td style={{ padding:'12px', textAlign:'center', whiteSpace: 'nowrap' }}>{index + 1}</td>
+                      <td style={{ padding:'12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{r.seat?.seat_number || r.seat || 'N/A'}</td>
+                      <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{r.user || 'N/A'}</td>
+                      <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{r.date || '—'}</td>
+                      <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{r.start_time || '—'} - {r.end_time || '—'}</td>
+                      <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>
+                        {r.status === 'booked' && <span style={{ color: '#d39e00', fontWeight:'bold' }}>⏳ Chờ check-in</span>}
+                        {r.status === 'checked_in' && <span style={{ color: '#28a745', fontWeight:'bold' }}>✅ Đang sử dụng</span>}
+                        {r.status === 'completed' && <span style={{ color: '#6c757d', fontWeight:'bold' }}>🔒 Đã check-out</span>}
                         {![ 'booked', 'checked_in', 'completed' ].includes(r.status) && (
-                          <span style={{color: 'red', fontWeight: 'bold'}}>{r.status}</span>
+                          <span style={{ color: 'red', fontWeight: 'bold' }}>{r.status || 'Không xác định'}</span>
                         )}
                       </td>
-                      <td>
-                        {r.status === 'booked' && (
-                          <button onClick={() => handleUpdateReservation(r.id, 'check_in')} style={{background: '#28a745', color: 'white', padding: '8px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold'}}>
-                            Duyệt Check-in
-                          </button>
-                        )}
-                        {r.status === 'checked_in' && (
-                          <button onClick={() => handleUpdateReservation(r.id, 'check_out')} style={{background: '#17a2b8', color: 'white', padding: '8px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold'}}>
-                            Xác nhận Check-out
-                          </button>
-                        )}
+                      <td style={{ padding:'12px', textAlign:'center' }}>
+                        <div style={{ display: 'inline-flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                          {r.status === 'booked' && (
+                            <button onClick={() => handleUpdateReservation(r.id, 'check_in')} style={{ background: '#28a745', color: 'white', padding: '8px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
+                              Duyệt check-in
+                            </button>
+                          )}
+                          {r.status === 'checked_in' && (
+                            <button onClick={() => handleUpdateReservation(r.id, 'check_out')} style={{ background: '#17a2b8', color: 'white', padding: '8px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
+                              Check-out
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -974,63 +1132,69 @@ function AdminDashboard() {
           </div>
 
           {/* BẢNG DỮ LIỆU ĐÃ LỌC */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', marginTop: '15px', fontSize: '14px', lineHeight: 1.5 }}>
             <thead>
-              <tr style={{ background: '#eee' }}>
-                <th style={{padding:'12px'}}>STT</th>
-                <th style={{padding:'12px'}}>Mã phiếu</th>
-                <th>Username</th>
-                <th>Họ và tên</th> {/* THÊM CỘT NÀY */}
-                <th>Sách mượn</th>
-                <th>Ngày mượn</th>
-                <th>Trạng thái</th>
-                <th>Tiền phạt</th>
-                <th>Thao tác</th>
+              <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #ccc' }}>
+                <th style={{ padding:'12px', textAlign:'center', minWidth:'60px' }}>STT</th>
+                <th style={{ padding:'12px', minWidth:'100px' }}>Mã phiếu</th>
+                <th style={{ padding:'12px', minWidth:'120px' }}>Username</th>
+                <th style={{ padding:'12px', minWidth:'140px' }}>Họ và tên</th>
+                <th style={{ padding:'12px', minWidth:'200px' }}>Sách mượn</th>
+                <th style={{ padding:'12px', minWidth:'120px' }}>Ngày mượn</th>
+                <th style={{ padding:'12px', minWidth:'120px' }}>Trạng thái</th>
+                <th style={{ padding:'12px', minWidth:'120px' }}>Tiền phạt</th>
+                <th style={{ padding:'12px', minWidth:'180px', textAlign:'center' }}>Thao tác</th>
               </tr>
             </thead>
             <tbody>
               {filteredLoans.length > 0 ? filteredLoans.map((loan, index) => (
-                <tr key={loan.id} style={{ borderBottom: '1px solid #ddd' }}>
-                  <td style={{padding:'12px'}}>{index + 1}</td>
-                  <td style={{padding:'12px', fontWeight:'bold'}}>#{loan.id}</td>
-                  <td>{loan.user}</td>
-                  <td>{loan.full_name || 'N/A'}</td> {/* THÊM DỮ LIỆU NÀY */}
-                  <td>
+                <tr key={loan.id} style={{ borderBottom: '1px solid #e6e6e6', background: index % 2 === 0 ? '#ffffff' : '#fbfbfb' }}>
+                  <td style={{ padding:'12px', textAlign:'center', whiteSpace: 'nowrap' }}>{index + 1}</td>
+                  <td style={{ padding:'12px', fontWeight: 600, whiteSpace: 'nowrap' }}>#{loan.id}</td>
+                  <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{loan.user || 'N/A'}</td>
+                  <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{loan.full_name || 'N/A'}</td>
+                  <td style={{ padding:'12px' }}>
                     <button
                       type="button"
                       onClick={() => openLoanDetailModal(loan)}
-                      style={{ background: 'none', border: 'none', color: '#0056b3', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                      style={{ background: 'none', border: 'none', color: '#0056b3', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: '14px' }}
                     >
                       {getLoanBookNames(loan) || 'Xem chi tiết phiếu'}
                     </button>
                   </td>
-                  <td>{loan.borrow_date}</td>
-                  <td><strong style={{color: loan.status === 'returned' ? '#28a745' : '#ffc107'}}>{loan.status}</strong></td>
-                  <td style={{ fontWeight: 'bold', color: getLoanFineTotal(loan) > 0 ? '#c62828' : '#2e7d32' }}>
+                  <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{loan.borrow_date || '—'}</td>
+                  <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>
+                    <strong style={{ color: loan.status === 'returned' ? '#28a745' : '#ffc107' }}>
+                      {loan.status === 'returned' ? '✅ Đã trả' : loan.status === 'borrowed' ? '📖 Đang mượn' : loan.status}
+                    </strong>
+                  </td>
+                  <td style={{ padding:'12px', fontWeight: 'bold', color: getLoanFineTotal(loan) > 0 ? '#c62828' : '#2e7d32', whiteSpace: 'nowrap' }}>
                     {Number(getLoanFineTotal(loan) || 0).toLocaleString('vi-VN')} đ
                   </td>
-                  <td>
-                    {loan.status !== 'returned' && (
-                      <button 
-                        onClick={() => handleUpdateLoan(loan.id)} 
-                        style={{ padding: '6px 12px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
+                  <td style={{ padding:'12px', textAlign:'center' }}>
+                    <div style={{ display: 'inline-flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                      {loan.status !== 'returned' && (
+                        <button
+                          onClick={() => handleUpdateLoan(loan.id)}
+                          style={{ padding: '6px 12px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
+                        >
+                          Xác nhận Đã Trả
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLoan(loan.id)}
+                        disabled={saving}
+                        style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
                       >
-                        Xác nhận Đã Trả
+                        Xóa phiếu
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteLoan(loan.id)}
-                      disabled={saving}
-                      style={{ marginLeft: '8px', padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
-                    >
-                      Xóa phiếu
-                    </button>
+                    </div>
                   </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '18px', color: '#777' }}>
                     Không tìm thấy phiếu mượn nào phù hợp với bộ lọc.
                   </td>
                 </tr>

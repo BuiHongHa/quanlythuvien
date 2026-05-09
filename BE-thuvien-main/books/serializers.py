@@ -9,24 +9,12 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class BookSerializer(serializers.ModelSerializer):
     is_available = serializers.SerializerMethodField()
-    cover_image = serializers.SerializerMethodField()
+    cover_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
     category_name = serializers.SerializerMethodField()
     
     class Meta:
         model = Book
         fields = '__all__'
-    
-    def get_cover_image(self, obj):
-        if not obj.cover_image:
-            return None
-        request = self.context.get('request')
-        try:
-            url = obj.cover_image.url
-        except ValueError:
-            return None
-        if request is not None:
-            return request.build_absolute_uri(url)
-        return url
     
     def get_category_name(self, obj):
         return obj.category.name if obj.category else None
