@@ -52,7 +52,7 @@ export function normalizeRole(role) {
 export function getAuthRole() {
   const token = localStorage.getItem('access_token');
   const payload = parseJwtPayload(token);
-  const storedRole = localStorage.getItem('role');
+  const storedRole = localStorage.getItem('role') || localStorage.getItem('user_role');
   const payloadRole = payload?.role || (payload?.is_staff ? 'librarian' : '');
 
   return normalizeRole(storedRole || payloadRole);

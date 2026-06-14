@@ -10,6 +10,24 @@ class SeatReservationSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['status', 'user'] # Trạng thái và user do hệ thống gán
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        # Bổ sung thông tin chi tiết về seat, zone và user để hiển thị trên frontend
+        rep['seat'] = {
+            'id': instance.seat.id,
+            'seat_number': instance.seat.seat_number,
+            'zone': {
+                'id': instance.seat.zone.id,
+                'name': instance.seat.zone.name
+            }
+        }
+        rep['user'] = {
+            'id': instance.user.id,
+            'username': instance.user.username,
+            'full_name': instance.user.full_name or instance.user.username
+        }
+        return rep
+
     def validate(self, data):
         """Thuật toán kiểm tra trùng lịch cốt lõi"""
         seat = data.get('seat')
@@ -27,7 +45,7 @@ class SeatReservationSerializer(serializers.ModelSerializer):
         # Công thức giao thoa thời gian: (StartA < EndB) và (EndA > StartB)
         # 4. Sửa lại tên gọi model và cập nhật trạng thái 'checked_in' cho khớp model
         overlapping_reservations = SeatReservation.objects.filter(
-            seat=seat, date=date, status__in=['booked', 'checked_in'] 
+            seat=seat, date=date, status__in=['pending', 'approved', 'checked_in', 'booked'] 
         ).filter(
             Q(start_time__lt=end_time) & Q(end_time__gt=start_time)
         )
@@ -36,7 +54,7 @@ class SeatReservationSerializer(serializers.ModelSerializer):
             overlapping_reservations = overlapping_reservations.exclude(id=self.instance.id)
 
         if overlapping_reservations.exists():
-            raise serializers.ValidationError("Ghế này đã có người đặt trong khoảng thời gian bạn chọn.")
+            raise serializers.ValidationError("Vị trí đã có người đặt tại khung giờ đó. Vui lòng đặt lại vị trí mới do đã có người đặt rồi.")
         
         return data
 

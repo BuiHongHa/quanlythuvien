@@ -14,12 +14,6 @@ class Command(BaseCommand):
         for loan in overdue_loans:
             loan.status = 'overdue'
             loan.save()
-            
-            # Giả sử phạt 5000 VND cho mỗi ngày trễ hẹn với mỗi cuốn sách
-            days_late = (today - loan.due_date).days
-            for detail in loan.loan_details.all():
-                detail.fine_amounts = days_late * 5000 
-                detail.save()
             count += 1
             
         self.stdout.write(self.style.SUCCESS(f'Đã cập nhật phạt thành công cho {count} phiếu mượn.'))

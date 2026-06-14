@@ -7,6 +7,7 @@ class Zone(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
+    layout_image = models.ImageField(upload_to='zone_layouts/', blank=True, null=True)
 
     def __str__(self):
         return self.name
@@ -20,16 +21,21 @@ class Seat(models.Model):
     
     seat_number = models.CharField(max_length=10)
     is_maintainance = models.BooleanField(default=False)
+    x_position = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
+    y_position = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
     
     def __str__(self):
         return f"{self.zone.name} -- {self.seat_number}"
 
 class SeatReservation(models.Model):
     STATUS_CHOICE = (
-        ('booked', 'Đã Đặt'),
+        ('pending', 'Chờ Duyệt'),     # Nên để pending lên đầu vì là default
+        ('approved', 'Đã Duyệt'),
         ('checked_in', 'Đang Ngồi'),
         ('completed', 'Đã Rời'),
         ('cancelled', 'Hủy'),
+        ('rejected', 'Từ Chối'),
+        ('booked', 'Đã Đặt'),         # Giữ lại cho tương thích ngược
     )
 
     user = models.ForeignKey(
@@ -51,30 +57,55 @@ class SeatReservation(models.Model):
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICE,
-        default='booked'
+        default='pending'  # Đã đúng
     )
 
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     def clean(self):
-        # 1. Kiểm tra giờ hợp lệ trước tiên
+        # 1. Kiểm tra giờ hợp lệ
         if self.start_time >= self.end_time:
             raise ValidationError('Giờ bắt đầu phải nhỏ hơn giờ kết thúc.')
-
-        # 2. Thuật toán kiểm tra trùng lịch (Time Overlapping)
-        overlapping = SeatReservation.objects.filter(
-            seat=self.seat,
-            date=self.date,
-            status__in=['booked', 'checked_in']  # SỬA LỖI: Cần dùng 2 dấu gạch dưới (status__in) và sửa lỗi chính tả 'chech_in' thành 'checked_in'
-        ).exclude(id=self.id).filter(
-            start_time__lt=self.end_time,  # SỬA LỖI LOGIC: start_time của database phải < end_time mới nhập
-            end_time__gt=self.start_time   # SỬA LỖI LOGIC: end_time của database phải > start_time mới nhập
-        )
         
-        if overlapping.exists():
-            raise ValidationError('Ghế đã được đặt trong khung giờ này.')
+        # 2. Kiểm tra ngày không được trong quá khứ (chỉ cho phép đặt từ hôm nay trở đi)
+        from datetime import date
+        if self.date < date.today():
+            raise ValidationError('Không thể đặt chỗ trong quá khứ.')
+
+        # 3. Kiểm tra trùng lịch cho các trạng thái "đã duyệt" hoặc "đang ngồi"
+        # Đây là các trạng thái chiếm chỗ thực tế
+        if self.status in ['approved', 'checked_in']:
+            overlapping = SeatReservation.objects.filter(
+                seat=self.seat,
+                date=self.date,
+                status__in=['approved', 'checked_in']  # Chỉ các đơn đã được duyệt mới tính
+            ).exclude(id=self.id).filter(
+                start_time__lt=self.end_time,
+                end_time__gt=self.start_time
+            )
+        
+            if overlapping.exists():
+                raise ValidationError('Ghế đã được duyệt trong khung giờ này.')
+        
+        # 4. THÊM MỚI: Kiểm tra trùng lịch cho các đơn pending (tùy chọn)
+        # Nếu muốn tránh nhiều người đặt cùng lúc chờ duyệt, bỏ comment đoạn này:
+        
+        # if self.status == 'pending':
+        #     pending_overlap = SeatReservation.objects.filter(
+        #         seat=self.seat,
+        #         date=self.date,
+        #         status='pending',
+        #         start_time__lt=self.end_time,
+        #         end_time__gt=self.start_time
+        #     ).exclude(id=self.id)
+            
+        #     if pending_overlap.exists():
+        #         raise ValidationError('Đã có người đặt chờ đợi trong khung giờ này.')
 
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.seat} -- {self.date}"
+        return f"{self.seat} -- {self.date} ({self.get_status_display()})"

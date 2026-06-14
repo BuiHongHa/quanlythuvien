@@ -1,51 +1,26 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
-import * as XLSX from 'xlsx';
-// 1. Sửa cách import ở dòng trên cùng
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable'; // Thay vì import 'jspdf-autotable';
 import { Icon } from './components/Icons';
+import PaginationBar from './components/PaginationBar';
+import ExportButtons from './components/ExportButtons';
+import { paginate } from './utils/pagination';
+import { exportToExcel, exportToPDF } from './utils/exportReports';
 import { getAuthHeaders } from './auth';
 
-const VIETNAMESE_FONT_URL = 'https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf';
-let vietnameseFontLoaded = false;
-
-const loadVietnameseFont = async (doc) => {
-  if (vietnameseFontLoaded) return;
-  const response = await fetch(VIETNAMESE_FONT_URL);
-  if (!response.ok) {
-    throw new Error('Không tải được font tiếng Việt cho PDF.');
-  }
-  const buffer = await response.arrayBuffer();
-  const uint8 = new Uint8Array(buffer);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < uint8.length; i += chunkSize) {
-    const chunk = uint8.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  doc.addFileToVFS('NotoSans-Regular.ttf', binary);
-  doc.addFont('NotoSans-Regular.ttf', 'NotoSans', 'normal');
-  vietnameseFontLoaded = true;
+const roleLabelMap = {
+  reader: 'Độc giả',
+  librarian: 'Thủ thư',
+  manager: 'Quản lý',
+  admin: 'Quản trị',
+  staff: 'Nhân viên',
 };
 
 function AdminDashboard() {
-  const EMPTY_BOOK_FORM = {
-    title: '',
-    author: '',
-    published_year: '',
-    publisher: '',
-    description: '',
-    category_id: '',
-    total_quantity: 1,
-    available_quantity: 1
-  };
-
   const [activeTab, setActiveTab] = useState('BOOKS');
   const [message, setMessage] = useState({ type: '', text: '' });
   const [saving, setSaving] = useState(false);
 
-  // Dữ liệu từ Backend
+  // Core data
   const [books, setBooks] = useState([]);
   const [categories, setCategories] = useState([]);
   const [zones, setZones] = useState([]);
@@ -53,1150 +28,1526 @@ function AdminDashboard() {
   const [users, setUsers] = useState([]);
   const [loans, setLoans] = useState([]);
   const [reservations, setReservations] = useState([]);
-  
-  // State cho thanh lọc tìm kiếm
-  const [categoryFilter, setCategoryFilter] = useState('');
-  const [bookFilter, setBookFilter] = useState('');
-  const [bookCategoryFilter, setBookCategoryFilter] = useState('');
-  const [filterUser, setFilterUser] = useState('');
-  const [filterBook, setFilterBook] = useState('');
 
-  // Khởi tạo các Form
-  const [categoryForm, setCategoryForm] = useState({ name: '', note: '' });
-  const [editingCategoryId, setEditingCategoryId] = useState(null);
+  // UI state
+  const [bookFilter, setBookFilter] = useState('');
+  const [showOnlyAvailable, setShowOnlyAvailable] = useState(false);
+  const [loanFilterText, setLoanFilterText] = useState('');
+  const [loanFilterStatus, setLoanFilterStatus] = useState('all');
+  const [seatFilterText, setSeatFilterText] = useState('');
+  const [seatFilterZone, setSeatFilterZone] = useState('all');
+  const [seatFilterStatus, setSeatFilterStatus] = useState('all');
+  const [bookPage, setBookPage] = useState(1);
+  const [bookPageSize, setBookPageSize] = useState(10);
+  const [seatPage, setSeatPage] = useState(1);
+  const [seatPageSize, setSeatPageSize] = useState(10);
+  const [loanPage, setLoanPage] = useState(1);
+  const [loanPageSize, setLoanPageSize] = useState(10);
+  const [reservationFilterText, setReservationFilterText] = useState('');
+  const [reservationFilterStatus, setReservationFilterStatus] = useState('all');
+  const [reservationPage, setReservationPage] = useState(1);
+  const [reservationPageSize, setReservationPageSize] = useState(10);
+  const [categoryPage, setCategoryPage] = useState(1);
+  const [categoryPageSize, setCategoryPageSize] = useState(8);
+  const [userPage, setUserPage] = useState(1);
+  const [userPageSize, setUserPageSize] = useState(10);
+  const [userFilterText, setUserFilterText] = useState('');
+
+  const [draggingSeatId, setDraggingSeatId] = useState(null);
+  const [dragPosition, setDragPosition] = useState(null);
+  const layoutContainerRef = useRef(null);
+
+  // Forms
+  const EMPTY_BOOK_FORM = { title: '', author: '', published_year: '', publisher: '', description: '', category: '', total_quantity: 1, available_quantity: 1 };
   const [bookForm, setBookForm] = useState(EMPTY_BOOK_FORM);
   const [coverImage, setCoverImage] = useState(null);
   const [editingBookId, setEditingBookId] = useState(null);
-  const [zoneForm, setZoneForm] = useState({ name: '', description: '', is_active: true });
-  const [seatForm, setSeatForm] = useState({ seat_number: '', zone: '', is_maintainance: false });
-  const [seatFilterZone, setSeatFilterZone] = useState('');
-  const [seatFilterStatus, setSeatFilterStatus] = useState('all');
-  const [seatFilterKeyword, setSeatFilterKeyword] = useState('');
-  const [reservationSearch, setReservationSearch] = useState('');
-  const [reservationStatusFilter, setReservationStatusFilter] = useState('all');
+
+  const [categoryForm, setCategoryForm] = useState({ name: '', note: '' });
+  const [editingCategoryId, setEditingCategoryId] = useState(null);
+
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [loanDetailFineMap, setLoanDetailFineMap] = useState({});
   const [loanDetailSaving, setLoanDetailSaving] = useState(false);
 
-  // Lấy Token bảo mật
-  // const getAuthHeaders = () => {
-  //   const token = localStorage.getItem('access_token');
-  //   if (!token) return {};
-  //   return { headers: { Authorization: `Bearer ${token}` } };
-  // };
+  const [selectedZoneId, setSelectedZoneId] = useState('');
+  const [zoneForm, setZoneForm] = useState({ name: '', description: '', is_active: true });
+  const [editingZoneId, setEditingZoneId] = useState(null);
+  const [zoneLayoutImage, setZoneLayoutImage] = useState(null);
+  const [seatForm, setSeatForm] = useState({ seat_number: '', is_maintainance: false, x_position: '', y_position: '' });
+  const [activeSeatId, setActiveSeatId] = useState(null);
 
-  // Tải dữ liệu theo Tab
+  const getMediaUrl = (filePath) => {
+    if (!filePath) return '';
+    return filePath.startsWith('http') ? filePath : `http://127.0.0.1:8000${filePath}`;
+  };
+
+  const loanStatusLabelMap = {
+    pending: 'Đang chờ duyệt',
+    borrowed: 'Đang mượn',
+    overdue: 'Quá hạn',
+    return_pending: 'Chờ xác nhận trả',
+    returned: 'Đã trả',
+    cancelled: 'Đã hủy',
+    rejected: 'Đã từ chối',
+  };
+
+  const reservationStatusLabelMap = {
+    pending: 'Đang chờ',
+    approved: 'Đã duyệt',
+    checked_in: 'Đang ngồi',
+    completed: 'Hoàn tất',
+    cancelled: 'Đã hủy',
+    rejected: 'Đã từ chối',
+    booked: 'Đã đặt',
+  };
+
   const loadData = async () => {
-    const token = localStorage.getItem('access_token');
-    if (!token) {
-      setMessage({ type: 'error', text: 'Bạn cần đăng nhập để truy cập trang quản lý.' });
-      return;
-    }
-
     try {
       const config = await getAuthHeaders();
-      if (activeTab === 'BOOKS') {
-        const [resBooks, resCats] = await Promise.all([
-          axios.get('http://127.0.0.1:8000/api/books/books/', config),
-          axios.get('http://127.0.0.1:8000/api/books/categories/', config).catch(() => ({ data: [] }))
-        ]);
-        setBooks(resBooks.data); setCategories(resCats.data);
-      }
-      if (activeTab === 'LIBRARY') {
-        const [resZones, resSeats, resResv] = await Promise.all([
-          axios.get('http://127.0.0.1:8000/api/library/zones/', config),
-          axios.get('http://127.0.0.1:8000/api/library/seats/', config),
-          axios.get('http://127.0.0.1:8000/api/library/reservations/', config)
-        ]);
-        setZones(resZones.data); setSeats(resSeats.data); setReservations(resResv.data);
-      }
-      if (activeTab === 'LOANS') {
-        const res = await axios.get('http://127.0.0.1:8000/api/loans/loans/', config);
-        setLoans(res.data);
-      }
-      if (activeTab === 'USERS') {
-        const res = await axios.get('http://127.0.0.1:8000/api/core/users/', config);
-        setUsers(res.data);
-      }
-    } catch (error) {
-      console.error("Lỗi tải dữ liệu", error);
-      const errorMsg = error.response?.status === 401 ? 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.' : 'Lỗi tải dữ liệu từ server.';
-      setMessage({ type: 'error', text: errorMsg });
+      const [bRes, cRes, zRes, sRes, uRes, lRes, rRes] = await Promise.all([
+        axios.get('http://127.0.0.1:8000/api/books/books/', config).catch(() => ({ data: [] })),
+        axios.get('http://127.0.0.1:8000/api/books/categories/', config).catch(() => ({ data: [] })),
+        axios.get('http://127.0.0.1:8000/api/library/zones/', config).catch(() => ({ data: [] })),
+        axios.get('http://127.0.0.1:8000/api/library/seats/', config).catch(() => ({ data: [] })),
+        axios.get('http://127.0.0.1:8000/api/core/users/', config).catch(() => ({ data: [] })),
+        axios.get('http://127.0.0.1:8000/api/loans/loans/', config).catch(() => ({ data: [] })),
+        axios.get('http://127.0.0.1:8000/api/library/reservations/', config).catch(() => ({ data: [] })),
+      ]);
+
+      setBooks(bRes.data || []);
+      setCategories(cRes.data || []);
+      setZones(zRes.data || []);
+      setSeats(sRes.data || []);
+      setUsers(uRes.data || []);
+      setLoans(lRes.data || []);
+      setReservations(rRes.data || []);
+    } catch (err) {
+      console.error('Load data error', err);
+      setMessage({ type: 'error', text: 'Lỗi tải dữ liệu từ server.' });
     }
   };
 
-  useEffect(() => { loadData(); }, [activeTab]);
+  useEffect(() => { loadData(); }, []);
 
-  // --- HÀM XỬ LÝ API ---
-
-  // Sửa lại hàm Thêm Thể loại
+  // ======= Book handlers =======
   const handleAddCategory = async (e) => {
-    e.preventDefault(); setSaving(true);
+    e.preventDefault();
+    setSaving(true);
     try {
       const config = await getAuthHeaders();
       if (editingCategoryId) {
         await axios.patch(`http://127.0.0.1:8000/api/books/categories/${editingCategoryId}/`, categoryForm, config);
+        setMessage({ type: 'success', text: 'Cập nhật thể loại thành công.' });
       } else {
         await axios.post('http://127.0.0.1:8000/api/books/categories/', categoryForm, config);
+        setMessage({ type: 'success', text: 'Tạo thể loại thành công.' });
       }
-      setMessage({ type: 'success', text: editingCategoryId ? 'Cập nhật Thể loại thành công!' : 'Thêm Thể loại thành công!' });
-      setCategoryForm({ name: '', note: '' });
-      setEditingCategoryId(null);
+      setCategoryForm({ name: '', note: '' }); setEditingCategoryId(null);
       loadData();
-    } catch (err) { 
-      // Lấy lỗi chi tiết từ Backend
-      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      setMessage({ type: 'error', text: editingCategoryId ? `Lỗi cập nhật Thể loại: ${errorDetail}` : `Lỗi Thể loại: ${errorDetail}` }); 
-    } finally { 
-      setSaving(false); 
-    }
+    } catch (err) { console.error(err); setMessage({ type: 'error', text: 'Lỗi khi lưu thể loại.' }); }
+    setSaving(false);
   };
 
-  const handleEditCategory = (category) => {
-    setEditingCategoryId(category.id);
-    setCategoryForm({
-      name: category.name || '',
-      note: category.note || ''
-    });
-  };
-
-  const handleCancelEditCategory = () => {
-    setEditingCategoryId(null);
-    setCategoryForm({ name: '', note: '' });
-  };
-
-  const handleDeleteCategory = async (categoryId) => {
-    const confirmed = window.confirm('Xóa thể loại sẽ không ảnh hưởng đến sách đã tồn tại. Bạn có chắc muốn tiếp tục?');
-    if (!confirmed) return;
-    setSaving(true);
-    try {
-      const config = await getAuthHeaders();
-      await axios.delete(`http://127.0.0.1:8000/api/books/categories/${categoryId}/`, config);
-      setMessage({ type: 'success', text: 'Đã xóa thể loại thành công!' });
-      loadData();
-    } catch (err) {
-      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      setMessage({ type: 'error', text: `Lỗi xóa thể loại: ${errorDetail}` });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Sửa lại hàm Thêm Sách
-  // Sửa lại hàm Thêm Sách (Đã dọn dẹp sạch sẽ và fix lỗi 400)
-  const resetBookForm = () => {
-    setBookForm(EMPTY_BOOK_FORM);
-    setCoverImage(null);
-    setEditingBookId(null);
-    const fileInput = document.getElementById("cover_image_input");
-    if (fileInput) fileInput.value = "";
-  };
+  const handleEditCategory = (c) => { setCategoryForm({ name: c.name, note: c.note || '' }); setEditingCategoryId(c.id); };
+  const handleDeleteCategory = async (id) => { if (!confirm('Xóa thể loại?')) return; const config = await getAuthHeaders(); await axios.delete(`http://127.0.0.1:8000/api/books/categories/${id}/`, config).catch(()=>{}); loadData(); };
 
   const handleAddBook = async (e) => {
-    e.preventDefault(); 
-    setSaving(true);
-    
-    const formData = new FormData();
-    
-    // 1. Các trường Text và Number
-    formData.append('title', bookForm.title);
-    formData.append('author', bookForm.author);
-    formData.append('publisher', bookForm.publisher);
-    formData.append('description', bookForm.description);
-    formData.append('category', bookForm.category_id);    // DRF thường đòi key là 'category'
-    formData.append('total_quantity', bookForm.total_quantity);
-    formData.append('available_quantity', bookForm.available_quantity);
-    
-    // 2. Xử lý riêng Năm xuất bản (Chỉ gửi khi có nhập số)
-    if (bookForm.published_year !== '') {
-        formData.append('published_year', bookForm.published_year); // Gọi đúng bookForm.published_year
-    }
-    
-    // 3. Gắn file ảnh bìa (Chỉ gửi khi có file)
-    if (coverImage) {
-        formData.append('cover_image', coverImage); 
-    }
-
-    // Debug: Log FormData contents
-    console.log('FormData contents:');
-    for (let [key, value] of formData.entries()) {
-        if (value instanceof File) {
-            console.log(`${key}: File(${value.name}, ${value.size} bytes)`);
-        } else {
-            console.log(`${key}: ${value}`);
-        }
-    }
-
+    e.preventDefault(); setSaving(true);
     try {
-      const authConfig = await getAuthHeaders();
-      console.log('Auth headers:', authConfig);
-      if (editingBookId) {
-        console.log('PATCH to:', `http://127.0.0.1:8000/api/books/books/${editingBookId}/`);
-        await axios.patch(`http://127.0.0.1:8000/api/books/books/${editingBookId}/`, formData, authConfig);
-      } else {
-        console.log('POST to:', 'http://127.0.0.1:8000/api/books/books/');
-        await axios.post('http://127.0.0.1:8000/api/books/books/', formData, authConfig);
-      }
-      
-      setMessage({ type: 'success', text: editingBookId ? 'Cập nhật sách thành công!' : 'Thêm sách thành công!' });
-      
-      // Reset form sau khi thêm/cập nhật thành công
-      resetBookForm();
-      
-      loadData(); // Tải lại danh sách sách
-    } catch (err) { 
-      // Bắt lỗi chi tiết và in ra F12 để kiểm tra nếu còn lỗi
-      console.log("CHI TIẾT LỖI TỪ DJANGO:", err);
-      console.log("Response data:", err.response?.data);
-      console.log("Response status:", err.response?.status);
-      console.log("Response headers:", err.response?.headers);
-      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      setMessage({ type: 'error', text: editingBookId ? `Lỗi cập nhật sách: ${errorDetail}` : `Lỗi thêm sách: ${errorDetail}` }); 
-    } finally { 
-      setSaving(false); 
-    }
+      const config = await getAuthHeaders();
+      const form = new FormData();
+      Object.keys(bookForm).forEach(k => form.append(k, bookForm[k]));
+      if (coverImage) form.append('cover_image', coverImage);
+      if (editingBookId) await axios.patch(`http://127.0.0.1:8000/api/books/books/${editingBookId}/`, form, { ...config, headers: { ...(config.headers||{}), 'Content-Type': 'multipart/form-data' } });
+      else await axios.post('http://127.0.0.1:8000/api/books/books/', form, { ...config, headers: { ...(config.headers||{}), 'Content-Type': 'multipart/form-data' } });
+      setMessage({ type: 'success', text: 'Lưu sách thành công.' });
+      setBookForm(EMPTY_BOOK_FORM); setCoverImage(null); setEditingBookId(null); loadData();
+    } catch (err) { console.error(err); setMessage({ type: 'error', text: 'Lỗi khi lưu sách.' }); }
+    setSaving(false);
   };
 
-  const handleEditBook = (book) => {
-    setEditingBookId(book.id);
-    setBookForm({
-      title: book.title || '',
-      author: book.author || '',
-      published_year: book.published_year || '',
-      publisher: book.publisher || '',
-      description: book.description || '',
-      category_id: book.category || '',
-      total_quantity: book.total_quantity ?? 1,
-      available_quantity: book.available_quantity ?? 1
-    });
-    setCoverImage(null);
-    const fileInput = document.getElementById("cover_image_input");
-    if (fileInput) fileInput.value = "";
-  };
-
-  const handleCancelEditBook = () => {
-    resetBookForm();
-  };
-  
+  const handleEditBook = (b) => { setBookForm({ title: b.title || '', author: b.author || '', published_year: b.published_year || '', publisher: b.publisher || '', description: b.description || '', category: b.category || '', total_quantity: b.total_quantity || 1, available_quantity: b.available_quantity || 1 }); setEditingBookId(b.id); };
+  const handleDeleteBook = async (id) => { if (!confirm('Xóa sách này?')) return; const config = await getAuthHeaders(); await axios.delete(`http://127.0.0.1:8000/api/books/books/${id}/`, config).catch(()=>{}); loadData(); };
 
   const handleAddZone = async (e) => {
-    e.preventDefault(); setSaving(true);
-    try {
-      const config = await getAuthHeaders();
-      await axios.post('http://127.0.0.1:8000/api/library/zones/', zoneForm, config);
-      setMessage({ type: 'success', text: 'Thêm Khu vực thành công!' }); loadData();
-    } catch (err) { setMessage({ type: 'error', text: 'Thêm Zone thất bại!' }); } finally { setSaving(false); }
-  };
-
-  const handleAddSeat = async (e) => {
-    e.preventDefault(); setSaving(true);
-    try {
-      const config = await getAuthHeaders();
-      await axios.post('http://127.0.0.1:8000/api/library/seats/', { ...seatForm, zone: Number(seatForm.zone) }, config);
-      setMessage({ type: 'success', text: 'Thêm Ghế thành công!' }); loadData();
-    } catch (err) { setMessage({ type: 'error', text: 'Thêm Ghế thất bại!' }); } finally { setSaving(false); }
-  };
-
-  const handleDeleteSeat = async (seatId) => {
-    const confirmed = window.confirm('Bạn có chắc chắn muốn xóa ghế này?');
-    if (!confirmed) return;
+    e.preventDefault();
     setSaving(true);
     try {
       const config = await getAuthHeaders();
-      await axios.delete(`http://127.0.0.1:8000/api/library/seats/${seatId}/`, config);
-      setMessage({ type: 'success', text: 'Xóa ghế thành công!' });
+      if (editingZoneId) {
+        await axios.patch(`http://127.0.0.1:8000/api/library/zones/${editingZoneId}/`, zoneForm, config);
+        setMessage({ type: 'success', text: 'Cập nhật khu vực thành công.' });
+      } else {
+        await axios.post('http://127.0.0.1:8000/api/library/zones/', zoneForm, config);
+        setMessage({ type: 'success', text: 'Tạo khu vực thành công.' });
+      }
+      setZoneForm({ name: '', description: '', is_active: true });
+      setEditingZoneId(null);
+      setSelectedZoneId('');
       loadData();
     } catch (err) {
-      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      setMessage({ type: 'error', text: `Lỗi xóa ghế: ${errorDetail}` });
-    } finally {
-      setSaving(false);
+      console.error(err);
+      setMessage({ type: 'error', text: 'Lỗi khi lưu khu vực.' });
+    }
+    setSaving(false);
+  };
+
+  const handleEditZone = (zone) => {
+    setZoneForm({ name: zone.name || '', description: zone.description || '', is_active: zone.is_active });
+    setEditingZoneId(zone.id);
+  };
+
+  const handleDeleteZone = async (id) => {
+    if (!confirm('Xóa khu vực này?')) return;
+    const config = await getAuthHeaders();
+    await axios.delete(`http://127.0.0.1:8000/api/library/zones/${id}/`, config).catch(() => {});
+    setSelectedZoneId((prev) => (String(prev) === String(id) ? '' : prev));
+    loadData();
+  };
+
+  const handleZoneSelect = (id) => {
+    setSelectedZoneId(id);
+    setActiveSeatId(null);
+    setSeatForm({ seat_number: '', is_maintainance: false, x_position: '', y_position: '' });
+  };
+
+  const handleReservationApprove = async (id) => {
+    try {
+      const config = await getAuthHeaders();
+      await axios.patch(`http://127.0.0.1:8000/api/library/reservations/${id}/approve/`, {}, config);
+      setMessage({ type: 'success', text: 'Đã duyệt đặt chỗ.' });
+      loadData();
+    } catch (err) {
+      console.error('Approve reservation error:', err.response?.data || err.message || err);
+      setMessage({ type: 'error', text: 'Lỗi khi duyệt đặt chỗ.' });
     }
   };
 
-  const handleUpdateReservation = async (id, actionType) => {
+  const handleReservationReject = async (id) => {
     try {
       const config = await getAuthHeaders();
-      const endpoint = actionType === 'check_in' ? 'check_in' : 'check_out';
-      await axios.patch(`http://127.0.0.1:8000/api/library/reservations/${id}/${endpoint}/`, {}, config);
-      setMessage({ type: 'success', text: `Đã cập nhật trạng thái yêu cầu thành công!` });
+      await axios.patch(`http://127.0.0.1:8000/api/library/reservations/${id}/reject/`, {}, config);
+      setMessage({ type: 'success', text: 'Đã từ chối đặt chỗ.' });
       loadData();
     } catch (err) {
-      const errorDetail = err.response?.data?.error || err.response?.data?.detail || err.message;
-      setMessage({ type: 'error', text: `Cập nhật thất bại: ${errorDetail}` });
+      console.error('Reject reservation error:', err.response?.data || err.message || err);
+      setMessage({ type: 'error', text: 'Lỗi khi từ chối đặt chỗ.' });
     }
   };
 
-  const handleUpdateLoan = async (id) => {
-    try {
-      const config = await getAuthHeaders();
-      await axios.patch(`http://127.0.0.1:8000/api/loans/loans/${id}/return_book/`, {}, config);
-      setMessage({ type: 'success', text: 'Đã xác nhận trả sách và hoàn lại kho!' }); 
-      
-      const resLoans = await axios.get('http://127.0.0.1:8000/api/loans/loans/', config);
-      setLoans(resLoans.data);
-
-      const resBooks = await axios.get('http://127.0.0.1:8000/api/books/books/', config);
-      setBooks(resBooks.data);
-      
-    } catch (err) { setMessage({ type: 'error', text: 'Lỗi cập nhật! Vui lòng thử lại.' }); }
-  };
-
-  const handleDeleteLoan = async (id) => {
-    const confirmed = window.confirm('Bạn có chắc chắn muốn xóa phiếu mượn này?');
-    if (!confirmed) return;
-    setSaving(true);
-    try {
-      const config = await getAuthHeaders();
-      await axios.delete(`http://127.0.0.1:8000/api/loans/loans/${id}/`, config);
-      setMessage({ type: 'success', text: 'Đã xóa phiếu mượn thành công!' });
-      loadData();
-    } catch (err) {
-      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      setMessage({ type: 'error', text: `Lỗi xóa phiếu mượn: ${errorDetail}` });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const openLoanDetailModal = (loan) => {
-    const initialFineMap = {};
-    (loan?.loan_details || []).forEach((detail) => {
-      initialFineMap[detail.id] = detail?.fine_amounts ?? 0;
+  const getAdminSeatStatus = (seat) => {
+    if (seat.is_maintainance) return 'maintenance';
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const currentTime = now.toTimeString().slice(0, 5);
+    const occupied = reservations.some((reservation) => {
+      const rSeatId = reservation.seat?.id || reservation.seat;
+      if (String(rSeatId) !== String(seat.id)) return false;
+      if (!['approved', 'checked_in', 'booked'].includes(reservation.status)) return false;
+      if (reservation.date !== today) return false;
+      return reservation.start_time <= currentTime && reservation.end_time > currentTime;
     });
-    setLoanDetailFineMap(initialFineMap);
-    setSelectedLoan(loan);
+    if (occupied) return 'occupied';
+    const reserved = reservations.some((reservation) => {
+      const rSeatId = reservation.seat?.id || reservation.seat;
+      if (String(rSeatId) !== String(seat.id)) return false;
+      if (!['approved', 'booked'].includes(reservation.status)) return false;
+      return reservation.date >= today;
+    });
+    return reserved ? 'reserved' : 'available';
   };
 
-  const closeLoanDetailModal = () => {
-    setSelectedLoan(null);
-    setLoanDetailFineMap({});
+  const statusIconMap = {
+    available: 'seat',
+    reserved: 'check',
+    occupied: 'close',
+    maintenance: 'warning',
   };
 
+  const saveSeatPosition = async (seatId, x, y) => {
+    try {
+      const authConfig = await getAuthHeaders();
+      const headers = {
+        ...(authConfig.headers || {}),
+        'Content-Type': 'application/json',
+      };
+      const payload = {
+        x_position: Number(x.toFixed(2)),
+        y_position: Number(y.toFixed(2)),
+      };
+      await axios.patch(`http://127.0.0.1:8000/api/library/seats/${seatId}/`, payload, { headers });
+      loadData();
+      setMessage({ type: 'success', text: 'Đã cập nhật vị trí ghế.' });
+    } catch (err) {
+      console.error('Seat update error:', err.response?.data || err.message || err);
+      const serverMessage = err.response?.data ?
+        (typeof err.response.data === 'string' ? err.response.data : JSON.stringify(err.response.data)) :
+        'Lỗi khi cập nhật vị trí ghế.';
+      setMessage({ type: 'error', text: `Lỗi cập nhật vị trí ghế: ${serverMessage}` });
+    }
+  };
+
+  const handleMarkerPointerDown = (seat, event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDraggingSeatId(seat.id);
+    setSelectedZoneId(String(seat.zone));
+    setSelectedSeat(String(seat.id));
+    setActiveSeatId(seat.id);
+    setSeatForm({
+      seat_number: seat.seat_number || '',
+      is_maintainance: seat.is_maintainance || false,
+      x_position: seat.x_position || '',
+      y_position: seat.y_position || '',
+    });
+  };
+
+  useEffect(() => {
+    if (!draggingSeatId) return undefined;
+    const handlePointerMove = (event) => {
+      if (!layoutContainerRef.current) return;
+      const rect = layoutContainerRef.current.getBoundingClientRect();
+      let x = ((event.clientX - rect.left) / rect.width) * 100;
+      let y = ((event.clientY - rect.top) / rect.height) * 100;
+      x = Math.min(100, Math.max(0, x));
+      y = Math.min(100, Math.max(0, y));
+      setDragPosition({ x, y });
+      setSeatForm((prev) => ({ ...prev, x_position: x.toFixed(1), y_position: y.toFixed(1) }));
+    };
+    const handlePointerUp = () => {
+      if (dragPosition && draggingSeatId) {
+        saveSeatPosition(draggingSeatId, dragPosition.x, dragPosition.y);
+      }
+      setDraggingSeatId(null);
+      setDragPosition(null);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [draggingSeatId, dragPosition]);
+
+  const handleZoneLayoutUpload = async (e) => {
+    e.preventDefault();
+    if (!selectedZoneId || !zoneLayoutImage) {
+      setMessage({ type: 'error', text: 'Chọn khu vực và file sơ đồ để tải lên.' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const config = await getAuthHeaders();
+      const formData = new FormData();
+      formData.append('layout_image', zoneLayoutImage);
+      await axios.patch(`http://127.0.0.1:8000/api/library/zones/${selectedZoneId}/`, formData, {
+        ...config,
+        headers: {
+          ...(config.headers || {}),
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      setZoneLayoutImage(null);
+      setMessage({ type: 'success', text: 'Tải lên sơ đồ khu vực thành công.' });
+      loadData();
+    } catch (err) {
+      console.error(err);
+      setMessage({ type: 'error', text: 'Lỗi khi tải lên sơ đồ khu vực.' });
+    }
+    setSaving(false);
+  };
+
+  const handleSeatSelect = (seat) => {
+    setActiveSeatId(seat.id);
+    setSelectedZoneId(seat.zone);
+    setSeatForm({
+      seat_number: seat.seat_number || '',
+      is_maintainance: seat.is_maintainance || false,
+      x_position: seat.x_position || '',
+      y_position: seat.y_position || '',
+    });
+  };
+
+  const handleSeatFormSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedZoneId || !seatForm.seat_number) {
+      setMessage({ type: 'error', text: 'Chọn khu vực và nhập mã ghế.' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const config = await getAuthHeaders();
+      const payload = {
+        zone: selectedZoneId,
+        seat_number: seatForm.seat_number,
+        is_maintainance: seatForm.is_maintainance,
+        x_position: seatForm.x_position || null,
+        y_position: seatForm.y_position || null,
+      };
+
+      if (activeSeatId) {
+        await axios.patch(`http://127.0.0.1:8000/api/library/seats/${activeSeatId}/`, payload, config);
+        setMessage({ type: 'success', text: 'Cập nhật ghế thành công.' });
+      } else {
+        await axios.post('http://127.0.0.1:8000/api/library/seats/', payload, config);
+        setMessage({ type: 'success', text: 'Tạo ghế mới thành công.' });
+      }
+      setActiveSeatId(null);
+      setSeatForm({ seat_number: '', is_maintainance: false, x_position: '', y_position: '' });
+      loadData();
+    } catch (err) {
+      console.error(err);
+      setMessage({ type: 'error', text: 'Lỗi khi lưu ghế.' });
+    }
+    setSaving(false);
+  };
+
+  const handleDeleteSeat = async (id) => {
+    if (!confirm('Xóa ghế này?')) return;
+    const config = await getAuthHeaders();
+    await axios.delete(`http://127.0.0.1:8000/api/library/seats/${id}/`, config).catch(() => {});
+    setActiveSeatId((prev) => (String(prev) === String(id) ? null : prev));
+    loadData();
+  };
+
+  const handleLayoutClick = (event) => {
+    if (!selectedZoneId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 100;
+    const y = ((event.clientY - rect.top) / rect.height) * 100;
+    setSeatForm((prev) => ({ ...prev, x_position: x.toFixed(1), y_position: y.toFixed(1) }));
+  };
+
+  const zoneSeats = seats.filter((seat) => String(seat.zone) === String(selectedZoneId));
+
+  const getSeatDisplayPosition = (seat, index, totalSeats) => {
+    const hasCoordinates = seat.x_position != null && seat.y_position != null;
+    if (hasCoordinates) {
+      return { x: seat.x_position, y: seat.y_position };
+    }
+
+    const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(totalSeats))));
+    const rows = Math.ceil(totalSeats / columns);
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    const xStep = 90 / (columns - 1 || 1);
+    const yStep = 86 / (rows - 1 || 1);
+
+    return {
+      x: 5 + col * xStep,
+      y: 8 + row * yStep,
+    };
+  };
+
+  // ======= Exports =======
+  const bookExportColumns = [
+    { key: 'id', label: 'Mã sách' },
+    { key: 'title', label: 'Tên sách' },
+    { key: 'author', label: 'Tác giả' },
+    { key: 'category', label: 'Thể loại' },
+    { key: 'publisher', label: 'Nhà xuất bản' },
+    { key: 'stock', label: 'Tồn kho (còn/tổng)' },
+  ];
+
+  const handleExportBooksExcel = () => {
+    const rows = filteredBooks.map((book) => ({
+      id: book.id,
+      title: book.title || '',
+      author: book.author || '',
+      category: book.category_name || '',
+      publisher: book.publisher || '',
+      stock: `${book.available_quantity || 0}/${book.total_quantity || 0}`,
+    }));
+    exportToExcel({
+      title: 'Danh sách sách',
+      sheetName: 'Danh sach sach',
+      filePrefix: 'danh_sach_sach',
+      columns: bookExportColumns,
+      rows,
+    });
+  };
+
+  const handleExportBooksPDF = async () => {
+    try {
+      await exportToPDF({
+        title: 'BÁO CÁO DANH SÁCH SÁCH',
+        subtitle: 'Thư viện PTIT',
+        filePrefix: 'danh_sach_sach',
+        columns: bookExportColumns,
+        rows: filteredBooks.map((book) => ({
+          id: book.id,
+          title: book.title || '',
+          author: book.author || '',
+          category: book.category_name || '',
+          publisher: book.publisher || '',
+          stock: `${book.available_quantity || 0}/${book.total_quantity || 0}`,
+        })),
+      });
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'Lỗi xuất PDF danh sách sách.' });
+    }
+  };
+
+  const seatExportColumns = [
+    { key: 'id', label: 'Mã ghế' },
+    { key: 'seat', label: 'Số ghế' },
+    { key: 'zone', label: 'Khu vực' },
+    { key: 'position', label: 'Vị trí trên sơ đồ' },
+    { key: 'status', label: 'Trạng thái' },
+  ];
+
+  const buildSeatExportRows = () => filteredSeats.map((seat) => ({
+    id: seat.id,
+    seat: seat.seat_number || '',
+    zone: zones.find((zone) => String(zone.id) === String(seat.zone))?.name || seat.zone,
+    position: seat.x_position != null && seat.y_position != null ? `${seat.x_position}% / ${seat.y_position}%` : 'Chưa đặt',
+    status: seat.is_maintainance ? 'Bảo trì' : 'Sẵn sàng',
+  }));
+
+  const handleExportSeatsExcel = () => {
+    exportToExcel({
+      title: 'Danh sách ghế',
+      sheetName: 'Danh sach ghe',
+      filePrefix: 'danh_sach_ghe',
+      columns: seatExportColumns,
+      rows: buildSeatExportRows(),
+    });
+  };
+
+  const handleExportSeatsPDF = async () => {
+    try {
+      await exportToPDF({
+        title: 'BÁO CÁO DANH SÁCH GHẾ',
+        subtitle: 'Thư viện PTIT',
+        filePrefix: 'danh_sach_ghe',
+        columns: seatExportColumns,
+        rows: buildSeatExportRows(),
+      });
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'Lỗi xuất PDF danh sách ghế.' });
+    }
+  };
+
+  const loanExportColumns = [
+    { key: 'id', label: 'Mã phiếu' },
+    { key: 'borrower', label: 'Người mượn' },
+    { key: 'borrowDate', label: 'Ngày mượn' },
+    { key: 'dueDate', label: 'Hạn trả' },
+    { key: 'books', label: 'Sách mượn' },
+    { key: 'status', label: 'Trạng thái' },
+  ];
+
+  const buildLoanExportRows = () => filteredLoans.map((loan) => ({
+    id: `#${loan.id}`,
+    borrower: loan.full_name || loan.user || '',
+    borrowDate: loan.borrow_date || '',
+    dueDate: loan.due_date || '',
+    books: loan.book_names || '',
+    status: loan.status_display || loanStatusLabelMap[loan.status] || loan.status,
+  }));
+
+  const handleExportLoansExcel = () => {
+    exportToExcel({
+      title: 'Danh sách phiếu mượn',
+      sheetName: 'Phieu muon',
+      filePrefix: 'danh_sach_phieu_muon',
+      columns: loanExportColumns,
+      rows: buildLoanExportRows(),
+    });
+  };
+
+  const handleExportLoansPDF = async () => {
+    try {
+      await exportToPDF({
+        title: 'BÁO CÁO PHIẾU MƯỢN SÁCH',
+        subtitle: 'Thư viện PTIT',
+        filePrefix: 'danh_sach_phieu_muon',
+        columns: loanExportColumns,
+        rows: buildLoanExportRows(),
+      });
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'Lỗi xuất PDF phiếu mượn.' });
+    }
+  };
+
+  const reservationExportColumns = [
+    { key: 'id', label: 'Mã đặt chỗ' },
+    { key: 'user', label: 'Người dùng' },
+    { key: 'seat', label: 'Ghế' },
+    { key: 'zone', label: 'Khu vực' },
+    { key: 'date', label: 'Ngày' },
+    { key: 'time', label: 'Khung giờ' },
+    { key: 'status', label: 'Trạng thái' },
+  ];
+
+  const buildReservationExportRows = () => filteredReservations.map((reservation) => ({
+    id: reservation.id,
+    user: reservation.user?.full_name || reservation.user?.username || '',
+    seat: reservation.seat?.seat_number || '',
+    zone: reservation.seat?.zone?.name || '',
+    date: reservation.date || '',
+    time: `${reservation.start_time || ''} - ${reservation.end_time || ''}`,
+    status: reservationStatusLabelMap[reservation.status] || reservation.status,
+  }));
+
+  const handleExportReservationsExcel = () => {
+    exportToExcel({
+      title: 'Danh sách đặt chỗ',
+      sheetName: 'Dat cho',
+      filePrefix: 'danh_sach_dat_cho',
+      columns: reservationExportColumns,
+      rows: buildReservationExportRows(),
+    });
+  };
+
+  const handleExportReservationsPDF = async () => {
+    try {
+      await exportToPDF({
+        title: 'BÁO CÁO ĐẶT CHỖ NGỒI',
+        subtitle: 'Thư viện PTIT',
+        filePrefix: 'danh_sach_dat_cho',
+        columns: reservationExportColumns,
+        rows: buildReservationExportRows(),
+      });
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'Lỗi xuất PDF đặt chỗ.' });
+    }
+  };
+
+  const userExportColumns = [
+    { key: 'id', label: 'Mã người dùng' },
+    { key: 'username', label: 'Tên đăng nhập' },
+    { key: 'fullName', label: 'Họ và tên' },
+    { key: 'email', label: 'Email' },
+    { key: 'role', label: 'Vai trò' },
+  ];
+
+  const handleExportUsersExcel = () => {
+    exportToExcel({
+      title: 'Danh sách người dùng',
+      sheetName: 'Nguoi dung',
+      filePrefix: 'danh_sach_nguoi_dung',
+      columns: userExportColumns,
+      rows: filteredUsers.map((user) => ({
+        id: user.id,
+        username: user.username || '',
+        fullName: user.full_name || '',
+        email: user.email || '',
+        role: roleLabelMap[user.role] || user.role || '',
+      })),
+    });
+  };
+
+  const handleExportUsersPDF = async () => {
+    try {
+      await exportToPDF({
+        title: 'BÁO CÁO NGƯỜI DÙNG',
+        subtitle: 'Thư viện PTIT',
+        filePrefix: 'danh_sach_nguoi_dung',
+        columns: userExportColumns,
+        rows: filteredUsers.map((user) => ({
+          id: user.id,
+          username: user.username || '',
+          fullName: user.full_name || '',
+          email: user.email || '',
+          role: roleLabelMap[user.role] || user.role || '',
+        })),
+      });
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'Lỗi xuất PDF người dùng.' });
+    }
+  };
+
+  // ======= Loans modal =======
+  const openLoanDetailModal = (loan) => { setSelectedLoan(loan); const map = {}; (loan.loan_details||[]).forEach(d=> map[d.id]=d.fine_amounts||0); setLoanDetailFineMap(map); };
+  const closeLoanDetailModal = () => { setSelectedLoan(null); setLoanDetailFineMap({}); };
   const handleSaveLoanDetails = async () => {
     if (!selectedLoan) return;
     setLoanDetailSaving(true);
     try {
       const config = await getAuthHeaders();
-      const details = selectedLoan.loan_details || [];
-      await Promise.all(details.map((detail) => {
-        const nextFine = loanDetailFineMap[detail.id] ?? detail.fine_amounts ?? 0;
-        return axios.patch(
-          `http://127.0.0.1:8000/api/loans/loandetails/${detail.id}/`,
-          { fine_amounts: Number(nextFine) || 0 },
+      const updates = Object.entries(loanDetailFineMap).map(([detailId, fine]) =>
+        axios.patch(
+          `http://127.0.0.1:8000/api/loans/loandetails/${detailId}/`,
+          { fine_amounts: Number(fine) || 0 },
+          config
+        )
+      );
+      await Promise.all(updates);
+
+      if (selectedLoan.status === 'return_pending') {
+        await axios.patch(
+          `http://127.0.0.1:8000/api/loans/loans/${selectedLoan.id}/finalize_return/`,
+          {},
           config
         );
-      }));
-
-      if (selectedLoan.status !== 'returned') {
-        await axios.patch(`http://127.0.0.1:8000/api/loans/loans/${selectedLoan.id}/return_book/`, {}, config);
+        setMessage({ type: 'success', text: 'Đã xác nhận tiền phạt và hoàn tất phiếu trả.' });
+      } else {
+        setMessage({ type: 'success', text: 'Cập nhật phiếu mượn thành công.' });
       }
 
-      setMessage({ type: 'success', text: 'Đã cập nhật chi tiết phiếu mượn thành công!' });
+      loadData();
       closeLoanDetailModal();
-      loadData();
-    } catch (err) {
-      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      setMessage({ type: 'error', text: `Lỗi cập nhật chi tiết phiếu: ${errorDetail}` });
-    } finally {
-      setLoanDetailSaving(false);
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: e.response?.data?.error || 'Lỗi lưu chi tiết phiếu.' });
     }
+    setLoanDetailSaving(false);
   };
 
-  const handleToggleUserStatus = async (userId, currentStatus) => {
-    setSaving(true);
+  const handleLoanApprove = async (loanId) => {
     try {
       const config = await getAuthHeaders();
-      const newStatus = !currentStatus;
-      await axios.patch(`http://127.0.0.1:8000/api/core/users/${userId}/`, { is_active: newStatus }, config);
-      setMessage({ type: 'success', text: `Đã ${newStatus ? 'mở khóa' : 'khóa'} tài khoản thành công!` });
+      await axios.patch(`http://127.0.0.1:8000/api/loans/loans/${loanId}/approve/`, {}, config);
+      setMessage({ type: 'success', text: 'Phiếu mượn đã được duyệt.' });
       loadData();
     } catch (err) {
-      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      setMessage({ type: 'error', text: `Lỗi cập nhật trạng thái: ${errorDetail}` });
-    } finally {
-      setSaving(false);
+      console.error('Approve loan error:', err.response?.data || err.message || err);
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Lỗi khi duyệt phiếu mượn.' });
     }
   };
 
-  const handleDeleteBook = async (bookId) => {
-    const confirmed = window.confirm('Bạn có chắc chắn muốn xóa sách này?');
-    if (!confirmed) return;
-    setSaving(true);
+  const handleLoanReject = async (loanId) => {
     try {
       const config = await getAuthHeaders();
-      await axios.delete(`http://127.0.0.1:8000/api/books/books/${bookId}/`, config);
-      setMessage({ type: 'success', text: 'Xóa sách thành công!' });
+      await axios.patch(`http://127.0.0.1:8000/api/loans/loans/${loanId}/reject/`, {}, config);
+      setMessage({ type: 'success', text: 'Phiếu mượn đã bị từ chối.' });
       loadData();
     } catch (err) {
-      const errorDetail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-      setMessage({ type: 'error', text: `Lỗi xóa sách: ${errorDetail}` });
-    } finally {
-      setSaving(false);
+      console.error('Reject loan error:', err.response?.data || err.message || err);
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Lỗi khi từ chối phiếu mượn.' });
     }
   };
 
-  // ==========================================
-  // HÀM XỬ LÝ LỌC & XUẤT FILE (Bắt buộc để TRƯỚC return)
-  // ==========================================
 
-  // Lọc dữ liệu dựa trên ô tìm kiếm
-  // Lọc dữ liệu dựa trên ô tìm kiếm
-  const filteredLoans = loans.filter(loan => {
-    const userString = String(loan.user || '').toLowerCase();
-    const fullNameString = String(loan.full_name || '').toLowerCase(); // Lấy thêm họ tên
-    const bookString = String(loan.book_names || '').toLowerCase(); 
-    
-    // Tìm kiếm khớp với Username HOẶC Họ và tên
-    const matchesUser = userString.includes(filterUser.toLowerCase()) || fullNameString.includes(filterUser.toLowerCase());
-    const matchesBook = bookString.includes(filterBook.toLowerCase());
-
-    return matchesUser && matchesBook;
-  });
-
-  const getLoanBookNames = (loan) => {
-    if (loan?.book_names && String(loan.book_names).trim()) {
-      return loan.book_names;
-    }
-    const detailTitles = (loan?.loan_details || [])
-      .map((detail) => detail?.book?.title)
-      .filter(Boolean);
-    return detailTitles.length ? detailTitles.join(', ') : null;
-  };
-
-  const getLoanFineTotal = (loan) => {
-    const total = (loan?.loan_details || []).reduce((sum, detail) => {
-      const fine = Number(detail?.fine_amounts || 0);
-      return sum + (Number.isNaN(fine) ? 0 : fine);
-    }, 0);
-    return total;
-  };
-
-  const occupiedSeatIds = new Set(
-    reservations
-      .filter((reservation) => reservation?.status === 'checked_in')
-      .map((reservation) => Number(reservation?.seat?.id || reservation?.seat))
-      .filter(Boolean)
-  );
-
-  const getSeatStatus = (seat) => {
-    if (seat.is_maintainance) return 'maintenance';
-    if (occupiedSeatIds.has(Number(seat.id))) return 'occupied';
-    return 'available';
-  };
-
-  const getSeatStatusLabel = (seat) => {
-    const status = getSeatStatus(seat);
-    if (status === 'maintenance') return 'Đang bảo trì';
-    if (status === 'occupied') return 'Đang được sử dụng';
-    return 'Sẵn sàng';
-  };
+  // Derived lists
+  const filteredBooks = books.filter(b => { const q = bookFilter.trim().toLowerCase(); const matches = !q || `${b.title||''} ${b.author||''}`.toLowerCase().includes(q) || String(b.id).includes(q); if (showOnlyAvailable) return matches && (b.available_quantity||0) > 0; return matches; });
+  const booksPageData = paginate(filteredBooks, bookPage, bookPageSize);
+  const pagedBooks = booksPageData.items;
+  const currentBookPage = booksPageData.currentPage;
+  const bookPageCount = booksPageData.pageCount;
 
   const filteredSeats = seats.filter((seat) => {
-    const seatZoneId = Number(seat?.zone?.id || seat?.zone || 0);
-    const matchesZone = !seatFilterZone || seatZoneId === Number(seatFilterZone);
-    const matchesKeyword = String(seat?.seat_number || '').toLowerCase().includes(seatFilterKeyword.toLowerCase());
-
-    if (seatFilterStatus === 'all') return matchesZone && matchesKeyword;
-    return matchesZone && matchesKeyword && getSeatStatus(seat) === seatFilterStatus;
+    const text = seatFilterText.trim().toLowerCase();
+    const matchesText = !text || `${seat.seat_number || ''} ${seat.id || ''}`.toLowerCase().includes(text);
+    const matchesZone = seatFilterZone === 'all' || String(seat.zone) === String(seatFilterZone);
+    const matchesStatus = seatFilterStatus === 'all' ||
+      (seatFilterStatus === 'maintenance' ? !!seat.is_maintainance : !seat.is_maintainance);
+    return matchesText && matchesZone && matchesStatus;
   });
+  const seatsPageData = paginate(filteredSeats, seatPage, seatPageSize);
+  const pagedSeats = seatsPageData.items;
+  const currentSeatPage = seatsPageData.currentPage;
+  const seatPageCount = seatsPageData.pageCount;
+
+  const sortedLoans = [...loans].sort((a, b) => {
+    if (a.borrow_date && b.borrow_date) {
+      return String(b.borrow_date).localeCompare(String(a.borrow_date));
+    }
+    return (b.id || 0) - (a.id || 0);
+  });
+
+  const filteredLoans = sortedLoans.filter((loan) => {
+    const text = loanFilterText.trim().toLowerCase();
+    const matchesText = !text || `${loan.full_name || loan.user || ''}`.toLowerCase().includes(text) || String(loan.id).includes(text);
+    const matchesStatus = loanFilterStatus === 'all' || String(loan.status) === loanFilterStatus;
+    return matchesText && matchesStatus;
+  });
+  const loansPageData = paginate(filteredLoans, loanPage, loanPageSize);
+  const pagedLoans = loansPageData.items;
+  const currentLoanPage = loansPageData.currentPage;
+  const loanPageCount = loansPageData.pageCount;
 
   const filteredReservations = reservations.filter((reservation) => {
-    const keyword = reservationSearch.trim().toLowerCase();
-    const seatLabel = String(reservation?.seat?.seat_number || reservation?.seat || '').toLowerCase();
-    const userLabel = String(reservation?.user || '').toLowerCase();
-    const matchesKeyword = !keyword || seatLabel.includes(keyword) || userLabel.includes(keyword);
-    if (reservationStatusFilter === 'all') return matchesKeyword;
-    return matchesKeyword && reservation.status === reservationStatusFilter;
+    const text = reservationFilterText.trim().toLowerCase();
+    const matchesText = !text || `${reservation.user?.full_name || reservation.user?.username || ''}`.toLowerCase().includes(text)
+      || `${reservation.seat?.seat_number || ''}`.toLowerCase().includes(text)
+      || `${reservation.seat?.zone?.name || ''}`.toLowerCase().includes(text);
+    const matchesStatus = reservationFilterStatus === 'all' || reservation.status === reservationFilterStatus;
+    return matchesText && matchesStatus;
   });
+  const reservationsPageData = paginate(filteredReservations, reservationPage, reservationPageSize);
+  const pagedReservations = reservationsPageData.items;
+  const currentReservationPage = reservationsPageData.currentPage;
+  const reservationPageCount = reservationsPageData.pageCount;
 
-  const handleExportSeatsExcel = () => {
-    const exportData = filteredSeats.map((seat) => ({
-      "ID Ghế": seat.id,
-      "Mã ghế": seat.seat_number,
-      "Khu vực": seat.zone?.name || seat.zone || 'N/A',
-      "Trạng thái": getSeatStatusLabel(seat)
-    }));
+  const categoriesPageData = paginate(categories, categoryPage, categoryPageSize);
+  const pagedCategories = categoriesPageData.items;
+  const currentCategoryPage = categoriesPageData.currentPage;
+  const categoryPageCount = categoriesPageData.pageCount;
 
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Bao_Cao_Ghe");
-    XLSX.writeFile(workbook, `Bao_Cao_Ghe_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
-  const handleExportSeatsPDF = async () => {
-    try {
-      const doc = new jsPDF();
-      await loadVietnameseFont(doc);
-      doc.setFont('NotoSans', 'normal');
-      doc.setFontSize(12);
-      doc.text("BÁO CÁO GHẾ NGỒI - THƯ VIỆN PTIT", 14, 15);
-
-      const tableColumn = ["ID", "Mã ghế", "Khu vực", "Trạng thái"];
-      const tableRows = filteredSeats.map((seat) => ([
-        seat.id,
-        seat.seat_number || 'N/A',
-        seat.zone?.name || seat.zone || 'N/A',
-        getSeatStatusLabel(seat)
-      ]));
-
-      autoTable(doc, {
-        head: [tableColumn],
-        body: tableRows,
-        startY: 25,
-        styles: { font: 'NotoSans', fontStyle: 'normal' },
-        headStyles: { font: 'NotoSans', fontStyle: 'normal' },
-        bodyStyles: { font: 'NotoSans', fontStyle: 'normal' }
-      });
-
-      doc.save(`Bao_Cao_Ghe_${new Date().toISOString().slice(0, 10)}.pdf`);
-    } catch (err) {
-      const errorDetail = err?.message || 'Không thể xuất báo cáo ghế.';
-      setMessage({ type: 'error', text: `Lỗi xuất PDF ghế: ${errorDetail}` });
-    }
-  };
-
-  const handleExportBooksExcel = () => {
-    const exportData = books.map((book, index) => ({
-      "STT": index + 1,
-      "ID sách": book.id,
-      "Tên sách": book.title || 'N/A',
-      "Tác giả": book.author || 'Chưa rõ',
-      "Thể loại": book.category_name || categories.find((c) => Number(c.id) === Number(book.category))?.name || 'Chưa phân loại',
-      "Năm xuất bản": book.published_year || 'N/A',
-      "Nhà xuất bản": book.publisher || 'N/A',
-      "Tồn kho": `${book.available_quantity}/${book.total_quantity}`
-    }));
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Bao_Cao_Sach");
-    XLSX.writeFile(workbook, `Bao_Cao_Sach_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
-  const handleExportBooksPDF = async () => {
-    try {
-      const doc = new jsPDF();
-      await loadVietnameseFont(doc);
-      doc.setFont('NotoSans', 'normal');
-      doc.setFontSize(12);
-      doc.text("BÁO CÁO DANH SÁCH SÁCH - THƯ VIỆN PTIT", 14, 15);
-
-      const tableColumn = ["STT", "ID", "Tên sách", "Tác giả", "Thể loại", "Tồn kho"];
-      const tableRows = books.map((book, index) => ([
-        index + 1,
-        book.id,
-        book.title || 'N/A',
-        book.author || 'Chưa rõ',
-        book.category_name || categories.find((c) => Number(c.id) === Number(book.category))?.name || 'Chưa phân loại',
-        `${book.available_quantity}/${book.total_quantity}`
-      ]));
-
-      autoTable(doc, {
-        head: [tableColumn],
-        body: tableRows,
-        startY: 25,
-        styles: { font: 'NotoSans', fontStyle: 'normal' },
-        headStyles: { font: 'NotoSans', fontStyle: 'normal' },
-        bodyStyles: { font: 'NotoSans', fontStyle: 'normal' }
-      });
-
-      doc.save(`Bao_Cao_Sach_${new Date().toISOString().slice(0, 10)}.pdf`);
-    } catch (err) {
-      const errorDetail = err?.message || 'Không thể xuất báo cáo sách.';
-      setMessage({ type: 'error', text: `Lỗi xuất PDF sách: ${errorDetail}` });
-    }
-  };
-
-  // Xuất Excel
-  const handleExportExcel = () => {
-    const exportData = filteredLoans.map(loan => ({
-      "Mã phiếu": `#${loan.id}`,
-      "Username": loan.user,
-      "Họ và tên": loan.full_name || 'N/A', // Thêm cột này
-      "Sách mượn": loan.book_names || 'N/A',
-      "Ngày mượn": loan.borrow_date,
-      "Ngày trả": loan.return_date || 'Chưa trả',
-      "Trạng thái": loan.status === 'returned' ? 'Đã trả' : 'Đang mượn',
-      "Tiền phạt": Number(getLoanFineTotal(loan) || 0).toLocaleString('vi-VN')
-    }));
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Bao_Cao_Muon_Tra");
-    XLSX.writeFile(workbook, `Bao_Cao_Thu_Vien_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
-  // Xuất PDF
-  const handleExportPDF = async () => {
-    try {
-      const doc = new jsPDF();
-      await loadVietnameseFont(doc);
-      doc.setFont('NotoSans', 'normal');
-      doc.setFontSize(12);
-      doc.text("BÁO CÁO MƯỢN TRẢ SÁCH - THƯ VIỆN PTIT", 14, 15);
-
-      const tableColumn = ["Mã phiếu", "Username", "Họ và tên", "Sách mượn", "Ngày mượn", "Trạng thái", "Tiền phạt"];
-      const tableRows = [];
-
-      filteredLoans.forEach(loan => {
-        const loanData = [
-          `#${loan.id}`,
-          loan.user || 'N/A',
-          loan.full_name || 'N/A',
-          getLoanBookNames(loan) || 'N/A',
-          loan.borrow_date,
-          loan.status === 'returned' ? 'Đã trả' : 'Đang mượn',
-          `${Number(getLoanFineTotal(loan) || 0).toLocaleString('vi-VN')} đ`
-        ];
-        tableRows.push(loanData);
-      });
-
-      autoTable(doc, {
-        head: [tableColumn],
-        body: tableRows,
-        startY: 25,
-        styles: { font: 'NotoSans', fontStyle: 'normal' },
-        headStyles: { font: 'NotoSans', fontStyle: 'normal' },
-        bodyStyles: { font: 'NotoSans', fontStyle: 'normal' }
-      });
-
-      doc.save(`Bao_Cao_Thu_Vien_${new Date().toISOString().slice(0, 10)}.pdf`);
-    } catch (err) {
-      const errorDetail = err?.message || 'Không thể xuất PDF tiếng Việt.';
-      setMessage({ type: 'error', text: `Lỗi xuất PDF: ${errorDetail}` });
-    }
-  };
-
-  const filteredCategories = categories.filter((c) => {
-    const normalizedFilter = categoryFilter.trim().toLowerCase();
-    if (!normalizedFilter) return true;
-    return String(c.id).includes(normalizedFilter) || c.name.toLowerCase().includes(normalizedFilter);
+  const filteredUsers = users.filter((user) => {
+    const text = userFilterText.trim().toLowerCase();
+    if (!text) return true;
+    return `${user.username || ''} ${user.full_name || ''} ${user.email || ''} ${user.role || ''}`.toLowerCase().includes(text)
+      || String(user.id).includes(text);
   });
+  const usersPageData = paginate(filteredUsers, userPage, userPageSize);
+  const pagedUsers = usersPageData.items;
+  const currentUserPage = usersPageData.currentPage;
+  const userPageCount = usersPageData.pageCount;
 
-  const filteredBooks = books.filter((b) => {
-    const normalizedFilter = bookFilter.trim().toLowerCase();
-    const matchesText = !normalizedFilter || String(b.id).includes(normalizedFilter) || (b.title || '').toLowerCase().includes(normalizedFilter);
-    const matchesCategory = !bookCategoryFilter || String(b.category || '').includes(bookCategoryFilter);
-    return matchesText && matchesCategory;
-  });
-  // ==========================================
-  // RENDER GIAO DIỆN
-  // ==========================================
+  // Quick stats feature (new)
+  const stats = { books: books.length, users: users.length, seats: seats.length, reservations: reservations.length };
+
+  const overdueLoansCount = loans.filter((l) => l.status === 'overdue').length;
+  
+  const overdueReservationsCount = reservations.filter((r) => {
+    if (!['pending', 'approved', 'checked_in'].includes(r.status)) return false;
+    const now = new Date();
+    const todayStr = now.toLocaleDateString('sv-SE');
+    const currentTimeStr = now.toTimeString().split(' ')[0].substring(0, 5);
+    if (r.date < todayStr) return true;
+    if (r.date === todayStr && (r.end_time || '').substring(0, 5) < currentTimeStr) return true;
+    return false;
+  }).length;
+
   return (
-    <div className="container">
-      <h2 style={{ color: '#b01e23', borderBottom: '2px solid #ddd', paddingBottom: '10px' }}><Icon name="admin" size={24} className="heading-icon" />BẢNG ĐIỀU KHIỂN QUẢN TRỊ</h2>
-      
-      {/* TABS */}
-      <div className="admin-tabs" style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-        {['BOOKS', 'LIBRARY', 'LOANS', 'USERS'].map(tab => (
-          <button key={tab} 
-            onClick={() => { setActiveTab(tab); setMessage({type:'', text:''}); }}
-            style={{
-              padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '5px', fontWeight: 'bold',
-              background: activeTab === tab ? '#b01e23' : '#e0e0e0', color: activeTab === tab ? 'white' : 'black', display: 'inline-flex', alignItems: 'center', gap: '8px'
-            }}
-          >
-            {tab === 'BOOKS' ? <><Icon name="book" size={18} /> Sách</> : tab === 'LIBRARY' ? <><Icon name="seat" size={18} /> Chỗ ngồi</> : tab === 'LOANS' ? <><Icon name="search" size={18} /> Mượn trả</> : <><Icon name="user" size={18} /> Người dùng</>}
-          </button>
-        ))}
+    <div className="container admin-dashboard-container">
+      <div className="admin-header">
+        <div>
+          <h2><Icon name="admin" size={24} className="heading-icon" /> BẢNG ĐIỀU KHIỂN QUẢN TRỊ</h2>
+          <p className="dashboard-note">Quản lý sách, khu vực, ghế, phiếu mượn và người dùng trong hệ thống.</p>
+        </div>
+        <div className="admin-tabs">
+          {['BOOKS','LIBRARY','RESERVATIONS','LOANS','USERS'].map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={activeTab === t ? 'active' : ''}
+              onClick={() => { setActiveTab(t); setMessage({ type:'', text:'' }); }}
+            >
+              {t === 'BOOKS' ? 'Sách' : t === 'LIBRARY' ? 'Khu vực' : t === 'RESERVATIONS' ? 'Đặt chỗ' : t === 'LOANS' ? 'Phiếu mượn' : 'Người dùng'}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {message.text && <div style={{ padding: '10px', marginBottom: '15px', borderRadius: '5px', background: message.type === 'success' ? '#d4edda' : '#f8d7da', color: message.type === 'success' ? '#155724' : '#721c24' }}>{message.text}</div>}
+      <div className="stat-grid">
+        <div className="stat-card stat-card-books"><span className="stat-label">Sách</span><strong>{stats.books}</strong></div>
+        <div className="stat-card stat-card-users"><span className="stat-label">Người dùng</span><strong>{stats.users}</strong></div>
+        <div className="stat-card stat-card-seats"><span className="stat-label">Ghế</span><strong>{stats.seats}</strong></div>
+        <div className="stat-card stat-card-reservations"><span className="stat-label">Đặt chỗ</span><strong>{stats.reservations}</strong></div>
+      </div>
 
-      {/* --- TAB SÁCH --- */}
+      {(overdueLoansCount > 0 || overdueReservationsCount > 0) && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          marginBottom: '24px',
+          padding: '16px 20px',
+          backgroundColor: '#fffbeb',
+          border: '1px solid #fde68a',
+          borderRadius: '14px',
+          boxShadow: '0 4px 12px rgba(251, 191, 36, 0.08)'
+        }}>
+          <h4 style={{ margin: 0, color: '#b45309', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px' }}>
+            <span style={{ fontSize: '18px' }}>⚠️</span> Cảnh báo hệ thống cần xử lý:
+          </h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px' }}>
+            {overdueLoansCount > 0 && (
+              <span style={{ color: '#d97706', fontWeight: 500 }}>
+                • Có <strong>{overdueLoansCount}</strong> phiếu mượn sách đã quá hạn trả! 
+                <button 
+                  type="button" 
+                  onClick={() => { setActiveTab('LOANS'); setLoanFilterStatus('overdue'); }} 
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#b45309',
+                    textDecoration: 'underline',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    marginLeft: '8px',
+                    padding: 0
+                  }}
+                >
+                  Xem danh sách quá hạn
+                </button>
+              </span>
+            )}
+            {overdueReservationsCount > 0 && (
+              <span style={{ color: '#d97706', fontWeight: 500 }}>
+                • Có <strong>{overdueReservationsCount}</strong> phiếu đặt chỗ ngồi đã quá giờ quy định!
+                <button 
+                  type="button" 
+                  onClick={() => { setActiveTab('RESERVATIONS'); setReservationFilterStatus('all'); setReservationFilterText(''); }} 
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#b45309',
+                    textDecoration: 'underline',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    marginLeft: '8px',
+                    padding: 0
+                  }}
+                >
+                  Xem danh sách đặt chỗ
+                </button>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {message.text && (
+        <div className={`panel ${message.type === 'success' ? 'badge-success' : 'badge-danger'}`} style={{ marginBottom: 20 }}>
+          {message.text}
+        </div>
+      )}
+
       {activeTab === 'BOOKS' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
-            <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', borderLeft: '4px solid #0056b3' }}>
-              <h3>{editingCategoryId ? `1. Sửa Thể Loại #${editingCategoryId}` : '1. Thêm Thể Loại'}</h3>
-              <form onSubmit={handleAddCategory} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <input placeholder="Tên thể loại (VD: Giáo trình)..." required value={categoryForm.name} onChange={e => setCategoryForm({...categoryForm, name: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
-                <input   placeholder="Ghi chú (Note)..."   value={categoryForm.note}   onChange={e => setCategoryForm({...categoryForm, note: e.target.value})}   style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button type="submit" disabled={saving} style={{ flex: 1, padding: '10px', background: '#0056b3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                    {editingCategoryId ? 'Cập nhật Thể Loại' : 'Tạo Thể Loại'}
+        <div className="split-grid" style={{ gridTemplateColumns: '1fr 1.8fr' }}>
+          <div className="panel">
+            <h3>{editingCategoryId ? `Sửa Thể Loại #${editingCategoryId}` : 'Thêm Thể Loại'}</h3>
+            <form onSubmit={handleAddCategory} className="form-grid">
+              <input
+                className="input-rounded"
+                required
+                placeholder="Tên thể loại"
+                value={categoryForm.name}
+                onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+              />
+              <input
+                className="input-rounded"
+                placeholder="Ghi chú"
+                value={categoryForm.note}
+                onChange={(e) => setCategoryForm({ ...categoryForm, note: e.target.value })}
+              />
+              <div className="form-row">
+                <button type="submit" disabled={saving} className="btn-primary">
+                  {editingCategoryId ? 'Cập nhật' : 'Tạo'}
+                </button>
+                {editingCategoryId && (
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => { setEditingCategoryId(null); setCategoryForm({ name:'', note:'' }); }}
+                  >
+                    Hủy
                   </button>
-                  {editingCategoryId && (
-                    <button type="button" onClick={handleCancelEditCategory} disabled={saving} style={{ padding: '10px 12px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                      Hủy
-                    </button>
-                  )}
-                </div>
-              </form>
-            </div>
-            <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #eee' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
-                <h3 style={{ margin: 0 }}>Danh sách Thể Loại</h3>
-                <input
-                  type="text"
-                  placeholder="Tìm theo ID hoặc tên thể loại..."
-                  value={categoryFilter}
-                  onChange={e => setCategoryFilter(e.target.value)}
-                  style={{ flex: '1', minWidth: '220px', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
-                />
+                )}
               </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            </form>
+
+            <div className="section-block" style={{ marginTop: 24 }}>
+              <div className="list-section-header">
+                <div>
+                  <h4>Danh sách thể loại ({categories.length})</h4>
+                </div>
+              </div>
+              <PaginationBar
+                total={categories.length}
+                page={currentCategoryPage}
+                pageSize={categoryPageSize}
+                pageCount={categoryPageCount}
+                onPageChange={setCategoryPage}
+                onPageSizeChange={(size) => { setCategoryPageSize(size); setCategoryPage(1); }}
+                pageSizeOptions={[5, 8, 15, 30]}
+              />
+              <table className="dashboard-table">
                 <thead>
-                  <tr style={{ background: '#f1f1f1', borderBottom: '2px solid #ccc' }}>
-                    <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '60px' }}>STT</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '70px' }}>Mã TL</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Tên thể loại</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>Ghi chú</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '130px' }}>Hành động</th>
+                  <tr>
+                    <th>STT</th>
+                    <th>ID</th>
+                    <th>Tên</th>
+                    <th>Hành động</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCategories.map((c, index) => (
-                    <tr key={c.id} style={{ borderBottom: '1px solid #e5e5e5' }}>
-                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>{index + 1}</td>
-                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>{c.id}</td>
-                      <td style={{ padding: '10px 12px', textAlign: 'left' }}><strong>{c.name}</strong></td>
-                      <td style={{ padding: '10px 12px', textAlign: 'left', color: '#555' }}>{c.note || 'Không có ghi chú'}</td>
-                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                        <div style={{ display: 'inline-flex', gap: '8px' }}>
-                          <button
-                            type="button"
-                            onClick={() => handleEditCategory(c)}
-                            disabled={saving}
-                            style={{ padding: '6px 12px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                          >
-                            Sửa
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteCategory(c.id)}
-                            disabled={saving}
-                            style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                          >
-                            Xóa
-                          </button>
-                        </div>
+                  {pagedCategories.length > 0 ? pagedCategories.map((c, i) => (
+                    <tr key={c.id}>
+                      <td>{(currentCategoryPage - 1) * categoryPageSize + i + 1}</td>
+                      <td>{c.id}</td>
+                      <td>{c.name}</td>
+                      <td className="table-actions">
+                        <button type="button" onClick={() => handleEditCategory(c)}>Sửa</button>
+                        <button type="button" onClick={() => handleDeleteCategory(c.id)}>Xóa</button>
                       </td>
                     </tr>
-                  ))}
-                  {filteredCategories.length === 0 && (
-                    <tr><td colSpan="5" style={{ padding: '16px', textAlign: 'center', color: '#666' }}>Không có thể loại phù hợp.</td></tr>
+                  )) : (
+                    <tr><td colSpan={4} className="empty-row">Chưa có thể loại nào.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
-          <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', borderLeft: '4px solid #b01e23', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-            <h3>{editingBookId ? `2. Sửa Sách #${editingBookId}` : '2. Thêm Sách Mới'}</h3>
-            <form onSubmit={handleAddBook} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <input placeholder="Tên sách..." required value={bookForm.title} onChange={e => setBookForm({...bookForm, title: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
-              <input placeholder="Tác giả..." value={bookForm.author} onChange={e => setBookForm({...bookForm, author: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
-              
-              {/* Đã sửa pub_year thành published_year */}
-              <input type="number" placeholder="Năm XB..." value={bookForm.published_year} onChange={e => setBookForm({...bookForm, published_year: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
-              
-              <input placeholder="Nhà XB..." value={bookForm.publisher} onChange={e => setBookForm({...bookForm, publisher: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
-              
-              <textarea placeholder="Mô tả sách..." value={bookForm.description} onChange={e => setBookForm({...bookForm, description: e.target.value})} rows={4} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px', resize: 'vertical'}} />
-              
-              {/* Đã sửa category thành category_id */}
-              <select required value={bookForm.category_id} onChange={e => setBookForm({...bookForm, category_id: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}>
-                <option value="">-- Chọn thể loại --</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              
-              {/* Nút chọn ảnh vẫn giữ nguyên, gọi hàm setCoverImage rất chuẩn */}
-              <input type="file" accept="image/*" onChange={e => setCoverImage(e.target.files[0])} id="cover_image_input" />
-              
-              <div style={{display:'flex', gap:'10px'}}>
-                <input type="number" placeholder="Tổng SL" min="1" required value={bookForm.total_quantity} onChange={e => setBookForm({...bookForm, total_quantity: e.target.value})} style={{width:'50%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
-                <input type="number" placeholder="SL sẵn có" min="0" required value={bookForm.available_quantity} onChange={e => setBookForm({...bookForm, available_quantity: e.target.value})} style={{width:'50%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px'}}/>
+          <div className="panel">
+            <div className="section-title">Quản lý sách</div>
+            <div className="form-row">
+              <input
+                className="input-rounded"
+                placeholder="Tìm sách..."
+                value={bookFilter}
+                onChange={(e) => { setBookPage(1); setBookFilter(e.target.value); }}
+              />
+              <label className="action-pill" style={{ alignItems: 'center' }}>
+                <input type="checkbox" checked={showOnlyAvailable} onChange={(e) => { setBookPage(1); setShowOnlyAvailable(e.target.checked); }} />
+                Chỉ sách còn
+              </label>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <ExportButtons onExportExcel={handleExportBooksExcel} onExportPDF={handleExportBooksPDF} disabled={filteredBooks.length === 0} />
               </div>
-              <div style={{ display:'flex', gap:'10px' }}>
-                <button type="submit" disabled={saving} style={{ flex: 1, padding: '10px', background: '#b01e23', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                  {editingBookId ? 'Cập nhật Sách' : 'Lưu Sách'}
+            </div>
+
+            <div className="panel" style={{ padding: 20, marginTop: 20, marginBottom: 20 }}>
+              <h4>{editingBookId ? `Sửa Sách #${editingBookId}` : 'Thêm Sách'}</h4>
+              <form onSubmit={handleAddBook} className="form-grid">
+                <div className="form-row">
+                  <input
+                    className="input-rounded"
+                    placeholder="Tiêu đề"
+                    required
+                    value={bookForm.title}
+                    onChange={(e) => setBookForm({ ...bookForm, title: e.target.value })}
+                  />
+                  <input
+                    className="input-rounded"
+                    placeholder="Tác giả"
+                    value={bookForm.author}
+                    onChange={(e) => setBookForm({ ...bookForm, author: e.target.value })}
+                  />
+                </div>
+                <div className="form-row">
+                  <input
+                    className="input-rounded"
+                    placeholder="Nhà xuất bản"
+                    value={bookForm.publisher}
+                    onChange={(e) => setBookForm({ ...bookForm, publisher: e.target.value })}
+                  />
+                  <input
+                    className="input-rounded"
+                    type="number"
+                    placeholder="Năm XB"
+                    value={bookForm.published_year}
+                    onChange={(e) => setBookForm({ ...bookForm, published_year: e.target.value })}
+                  />
+                </div>
+                <div className="form-row" style={{ alignItems: 'center' }}>
+                  <select
+                    className="select-rounded"
+                    value={bookForm.category}
+                    onChange={(e) => setBookForm({ ...bookForm, category: e.target.value })}
+                  >
+                    <option value="">-- Chọn thể loại --</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+                    <span className="dashboard-note" style={{ margin: 0, whiteSpace: 'nowrap' }}>Ảnh bìa:</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setCoverImage(e.target.files[0])}
+                      style={{ fontSize: 14 }}
+                    />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <input
+                    className="input-rounded"
+                    type="number"
+                    min="1"
+                    value={bookForm.total_quantity}
+                    onChange={(e) => setBookForm({ ...bookForm, total_quantity: e.target.value })}
+                    placeholder="Số lượng"
+                  />
+                  <input
+                    className="input-rounded"
+                    type="number"
+                    min="0"
+                    value={bookForm.available_quantity}
+                    onChange={(e) => setBookForm({ ...bookForm, available_quantity: e.target.value })}
+                    placeholder="Còn lại"
+                  />
+                </div>
+                <textarea
+                  className="input-rounded"
+                  placeholder="Mô tả sách"
+                  rows={3}
+                  value={bookForm.description}
+                  onChange={(e) => setBookForm({ ...bookForm, description: e.target.value })}
+                />
+                <div className="form-row">
+                  <button type="submit" disabled={saving} className="btn-primary">
+                    {editingBookId ? 'Cập nhật' : 'Lưu Sách'}
+                  </button>
+                  {editingBookId && (
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => { setEditingBookId(null); setBookForm(EMPTY_BOOK_FORM); setCoverImage(null); }}
+                    >
+                      Hủy
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+
+            <div className="section-block">
+              <div className="list-section-header">
+                <div>
+                  <h4>Danh sách sách ({filteredBooks.length})</h4>
+                  <div className="dashboard-note">Lọc và phân trang danh sách sách trong thư viện.</div>
+                </div>
+              </div>
+              <PaginationBar
+                total={filteredBooks.length}
+                page={currentBookPage}
+                pageSize={bookPageSize}
+                pageCount={bookPageCount}
+                onPageChange={setBookPage}
+                onPageSizeChange={(size) => { setBookPageSize(size); setBookPage(1); }}
+              />
+              <table className="dashboard-table">
+                <thead>
+                  <tr>
+                    <th>STT</th>
+                    <th>ID</th>
+                    <th>Tiêu đề</th>
+                    <th>Tác giả</th>
+                    <th>Tồn kho</th>
+                    <th>Hành động</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedBooks.length > 0 ? pagedBooks.map((b, i) => (
+                    <tr key={b.id}>
+                      <td>{(currentBookPage - 1) * bookPageSize + i + 1}</td>
+                      <td>{b.id}</td>
+                      <td>{b.title}</td>
+                      <td>{b.author}</td>
+                      <td>{b.available_quantity}/{b.total_quantity}</td>
+                      <td className="table-actions">
+                        <button type="button" onClick={() => handleEditBook(b)}>Sửa</button>
+                        <button type="button" onClick={() => handleDeleteBook(b.id)}>Xóa</button>
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan={6} className="empty-row">Không tìm thấy sách phù hợp.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'LIBRARY' && (
+        <div className="split-grid">
+          <div className="panel">
+            <h3>{editingZoneId ? `Sửa Khu vực #${editingZoneId}` : 'Thêm Khu vực'}</h3>
+            <form onSubmit={handleAddZone} className="form-grid">
+              <input
+                className="input-rounded"
+                required
+                placeholder="Tên khu vực"
+                value={zoneForm.name}
+                onChange={(e) => setZoneForm({ ...zoneForm, name: e.target.value })}
+              />
+              <textarea
+                className="input-rounded"
+                placeholder="Mô tả"
+                value={zoneForm.description}
+                onChange={(e) => setZoneForm({ ...zoneForm, description: e.target.value })}
+                rows={4}
+              />
+              <label className="action-pill" style={{ padding: '12px 16px', margin: 0 }}>
+                <input type="checkbox" checked={zoneForm.is_active} onChange={(e) => setZoneForm({ ...zoneForm, is_active: e.target.checked })} />
+                Hoạt động
+              </label>
+              <div className="form-row">
+                <button type="submit" disabled={saving} className="btn-primary">
+                  {editingZoneId ? 'Cập nhật khu vực' : 'Tạo khu vực'}
                 </button>
-                {editingBookId && (
-                  <button type="button" onClick={handleCancelEditBook} disabled={saving} style={{ padding: '10px 14px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                {editingZoneId && (
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => { setEditingZoneId(null); setZoneForm({ name:'', description:'', is_active:true }); }}
+                  >
                     Hủy
                   </button>
                 )}
               </div>
             </form>
-          </div>
-          
-          <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #eee' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
-              <h3 style={{ margin: 0 }}>Danh sách Sách hiện có</h3>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', width: '100%', justifyContent: 'flex-end' }}>
-                <input
-                  type="text"
-                  placeholder="Tìm theo ID hoặc tên sách..."
-                  value={bookFilter}
-                  onChange={e => setBookFilter(e.target.value)}
-                  style={{ minWidth: '220px', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
-                />
-                <select
-                  value={bookCategoryFilter}
-                  onChange={e => setBookCategoryFilter(e.target.value)}
-                  style={{ minWidth: '220px', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
-                >
-                  <option value="">-- Lọc theo thể loại --</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <button onClick={handleExportBooksExcel} style={{ padding: '6px 12px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
-                  Xuất Excel
-                </button>
-                <button onClick={handleExportBooksPDF} style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
-                  Xuất PDF
-                </button>
-              </div>
-            </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: '#f1f1f1', borderBottom: '2px solid #ccc' }}>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '60px' }}>STT</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '70px' }}>Mã sách</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>Tên sách</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '100px' }}>Ảnh bìa</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>Thể loại</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>Tác giả</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '120px' }}>Tồn kho</th>
-                  <th style={{ padding: '10px 12px', textAlign: 'center', minWidth: '150px' }}>Hành động</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredBooks.map((b, index) => (
-                  <tr key={b.id} style={{ borderBottom: '1px solid #e5e5e5' }}>
-                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>{index + 1}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>{b.id}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'left' }}><strong>{b.title}</strong></td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                      {b.cover_image ? (
-                        <img 
-                          src={b.cover_image} 
-                          alt="Ảnh bìa" 
-                          style={{ width: '60px', height: '80px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #ddd' }}
-                        />
-                      ) : (
-                        <span style={{ color: '#999', fontSize: '12px' }}>Không có ảnh</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '10px 12px', textAlign: 'left' }}>{b.category_name || 'Chưa chọn'}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'left' }}>{b.author || 'Chưa rõ'}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>{b.available_quantity}/{b.total_quantity}</td>
-                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                      <div style={{ display: 'inline-flex', gap: '8px' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleEditBook(b)}
-                          disabled={saving}
-                          style={{ padding: '6px 12px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
-                        >
-                          Sửa
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteBook(b.id)}
-                          disabled={saving}
-                          style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
-                        >
-                          Xóa
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {filteredBooks.length === 0 && (
-                  <tr><td colSpan="8" style={{ padding: '12px', textAlign: 'center', color: '#666' }}>Không có sách phù hợp với tiêu chí tìm kiếm.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-      </div>
-        </div>
-      )}
 
-      {/* --- TAB CHỖ NGỒI (LIBRARY) --- */}
-      {activeTab === 'LIBRARY' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-            <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', borderTop: '4px solid #0056b3' }}>
-              <h3>1. Quản lý Khu vực (Zone)</h3>
-              <form onSubmit={handleAddZone} style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-                <input placeholder="Tên khu vực (VD: Tầng 1)" required value={zoneForm.name} onChange={e => setZoneForm({...zoneForm, name: e.target.value})} style={{flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius:'4px'}}/>
-                <button type="submit" disabled={saving} style={{ padding: '8px 15px', background: '#0056b3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Thêm</button>
-              </form>
-              <ul style={{ paddingLeft: '20px' }}>{zones.map(z => <li key={z.id}>ID: {z.id} - <strong>{z.name}</strong></li>)}</ul>
+            <div className="section-block">
+              <h4>Chọn khu vực để quản lý</h4>
+              <select
+                className="select-rounded"
+                value={selectedZoneId}
+                onChange={(e) => handleZoneSelect(e.target.value)}
+              >
+                <option value="">Chọn khu vực</option>
+                {zones.map((zone) => (
+                  <option key={zone.id} value={zone.id}>{zone.name}</option>
+                ))}
+              </select>
             </div>
-            
-            <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', borderTop: '4px solid #0056b3' }}>
-              <h3>2. Quản lý Ghế (Seat)</h3>
-              <form onSubmit={handleAddSeat} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
-                <select required value={seatForm.zone} onChange={e => setSeatForm({...seatForm, zone: e.target.value})} style={{padding: '8px', border: '1px solid #ccc', borderRadius:'4px'}}>
-                  <option value="">-- Chọn Khu vực --</option>
-                  {zones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
-                </select>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <input placeholder="Mã ghế (VD: A1)" required value={seatForm.seat_number} onChange={e => setSeatForm({...seatForm, seat_number: e.target.value})} style={{flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius:'4px'}}/>
-                  <button type="submit" disabled={saving} style={{ padding: '8px 15px', background: '#0056b3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Thêm Ghế</button>
-                </div>
-              </form>
-              <p>Tổng số ghế hệ thống: <strong>{seats.length}</strong></p>
-              <div style={{ marginTop: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                  <h4 style={{ margin: 0 }}>Danh sách Ghế</h4>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={handleExportSeatsExcel} style={{ padding: '6px 12px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
-                      Xuất Excel
-                    </button>
-                    <button onClick={handleExportSeatsPDF} style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
-                      Xuất PDF
-                    </button>
+
+            {selectedZoneId && (
+              <div className="section-block">
+                <h4>Tải sơ đồ khu vực</h4>
+                <form onSubmit={handleZoneLayoutUpload} className="form-row">
+                  <input type="file" accept="image/*" onChange={(e) => setZoneLayoutImage(e.target.files?.[0] || null)} />
+                  <button type="submit" disabled={saving} className="btn-primary">Tải lên</button>
+                </form>
+              </div>
+            )}
+          </div>
+
+          <div className="panel">
+            <div className="admin-header" style={{ alignItems: 'flex-start' }}>
+              <div>
+                <h3>Quản lý ghế</h3>
+                <p className="dashboard-note">Bạn có thể chỉnh sửa ghế, vị trí và sơ đồ khu vực ngay trong bảng điều khiển.</p>
+              </div>
+              <button type="button" className="button-secondary" onClick={loadData}>Tải lại dữ liệu</button>
+            </div>
+
+            <div className="split-grid" style={{ gap: 18 }}>
+              <div className="panel" style={{ padding: 18 }}>
+                <div className="section-header" style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+                  <div>
+                    <h4>Danh sách ghế ({filteredSeats.length})</h4>
+                    <div className="dashboard-note">Lọc nhanh theo ghế, khu vực và trạng thái.</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <ExportButtons onExportExcel={handleExportSeatsExcel} onExportPDF={handleExportSeatsPDF} disabled={filteredSeats.length === 0} />
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
+
+                <div className="filter-row" style={{ marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                   <input
-                    placeholder="Lọc theo mã ghế..."
-                    value={seatFilterKeyword}
-                    onChange={(e) => setSeatFilterKeyword(e.target.value)}
-                    style={{ padding: '8px', border: '1px solid #ccc', borderRadius:'4px', minWidth: '180px' }}
+                    className="input-rounded"
+                    placeholder="Tìm theo ghế hoặc ID..."
+                    value={seatFilterText}
+                    onChange={(e) => { setSeatPage(1); setSeatFilterText(e.target.value); }}
+                    style={{ flex: 1, minWidth: '220px' }}
                   />
                   <select
+                    className="select-rounded"
                     value={seatFilterZone}
-                    onChange={(e) => setSeatFilterZone(e.target.value)}
-                    style={{ padding: '8px', border: '1px solid #ccc', borderRadius:'4px', minWidth: '170px' }}
+                    onChange={(e) => { setSeatPage(1); setSeatFilterZone(e.target.value); }}
+                    style={{ minWidth: '180px' }}
                   >
-                    <option value="">Tất cả khu vực</option>
-                    {zones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+                    <option value="all">Tất cả khu vực</option>
+                    {zones.map((zone) => (
+                      <option key={zone.id} value={zone.id}>{zone.name}</option>
+                    ))}
                   </select>
                   <select
+                    className="select-rounded"
                     value={seatFilterStatus}
-                    onChange={(e) => setSeatFilterStatus(e.target.value)}
-                    style={{ padding: '8px', border: '1px solid #ccc', borderRadius:'4px', minWidth: '170px' }}
+                    onChange={(e) => { setSeatPage(1); setSeatFilterStatus(e.target.value); }}
+                    style={{ minWidth: '180px' }}
                   >
                     <option value="all">Tất cả trạng thái</option>
                     <option value="available">Sẵn sàng</option>
-                    <option value="occupied">Đang được sử dụng</option>
-                    <option value="maintenance">Đang bảo trì</option>
+                    <option value="maintenance">Bảo trì</option>
                   </select>
                 </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+
+                <PaginationBar
+                  total={filteredSeats.length}
+                  page={currentSeatPage}
+                  pageSize={seatPageSize}
+                  pageCount={seatPageCount}
+                  onPageChange={setSeatPage}
+                  onPageSizeChange={(size) => { setSeatPageSize(size); setSeatPage(1); }}
+                />
+                <table className="dashboard-table">
                   <thead>
-                    <tr style={{ background: '#eee' }}>
-                      <th style={{ padding: '10px' }}>STT</th>
-                      <th style={{ padding: '10px' }}>Mã ghế</th>
-                      <th style={{ padding: '10px' }}>Khu</th>
-                      <th style={{ padding: '10px' }}>Trạng thái</th>
-                      <th style={{ padding: '10px' }}>Thao tác</th>
+                    <tr>
+                      <th>STT</th>
+                      <th>ID</th>
+                      <th>Ghế</th>
+                      <th>Khu</th>
+                      <th>Vị trí</th>
+                      <th>Trạng thái</th>
+                      <th>Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredSeats.length === 0 ? (
-                      <tr>
-                        <td colSpan="5" style={{ padding: '12px', color:'#666', textAlign:'center' }}>
-                          Không có ghế phù hợp bộ lọc.
-                        </td>
-                      </tr>
-                    ) : filteredSeats.map((seat, index) => (
-                      <tr key={seat.id} style={{ borderBottom: '1px solid #ddd' }}>
-                        <td style={{ padding: '10px' }}>{index + 1}</td>
-                        <td style={{ padding: '10px' }}>{seat.seat_number}</td>
-                        <td style={{ padding: '10px' }}>{seat.zone?.name || seat.zone}</td>
-                        <td style={{ padding: '10px' }}>
-                          {getSeatStatusLabel(seat)}
-                        </td>
-                        <td style={{ padding: '10px' }}>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteSeat(seat.id)}
-                            disabled={saving}
-                            style={{ padding: '6px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
-                          >
-                            Xóa
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {pagedSeats.length > 0 ? pagedSeats.map((seat, i) => {
+                      const zoneName = zones.find((zone) => String(zone.id) === String(seat.zone))?.name || seat.zone;
+                      return (
+                        <tr key={seat.id}>
+                          <td>{(currentSeatPage - 1) * seatPageSize + i + 1}</td>
+                          <td>{seat.id}</td>
+                          <td>{seat.seat_number}</td>
+                          <td>{zoneName}</td>
+                          <td>{seat.x_position != null && seat.y_position != null ? `${seat.x_position}% / ${seat.y_position}%` : '-'}</td>
+                          <td>{seat.is_maintainance ? 'Bảo trì' : 'Sẵn sàng'}</td>
+                          <td className="table-actions">
+                            <button type="button" onClick={() => handleSeatSelect(seat)}>Sửa</button>
+                            <button type="button" onClick={() => handleDeleteSeat(seat.id)}>Xóa</button>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr><td colSpan={6} className="empty-row">Không tìm thấy ghế phù hợp.</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
-            </div>
-          </div>
 
-          <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #eee', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-            <h3 style={{ borderBottom: '2px solid #b01e23', paddingBottom: '10px', color: '#b01e23' }}>3. Duyệt Yêu Cầu Chỗ Ngồi (Check-in / Check-out)</h3>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
-              <input
-                placeholder="Tìm theo mã ghế hoặc user..."
-                value={reservationSearch}
-                onChange={(e) => setReservationSearch(e.target.value)}
-                style={{ flex: 1, minWidth: '220px', padding: '8px', border: '1px solid #ccc', borderRadius:'4px' }}
-              />
-              <select
-                value={reservationStatusFilter}
-                onChange={(e) => setReservationStatusFilter(e.target.value)}
-                style={{ minWidth: '200px', padding: '8px', border: '1px solid #ccc', borderRadius:'4px' }}
-              >
-                <option value="all">Tất cả trạng thái</option>
-                <option value="booked">Chờ check-in</option>
-                <option value="checked_in">Đang sử dụng</option>
-                <option value="completed">Đã check-out</option>
-              </select>
+              <div className="panel" style={{ padding: 18 }}>
+                <h4>{activeSeatId ? `Sửa ghế #${activeSeatId}` : 'Tạo / Chỉnh sửa ghế'}</h4>
+                <form onSubmit={handleSeatFormSubmit} className="form-grid">
+                  <select
+                    className="select-rounded"
+                    value={selectedZoneId}
+                    onChange={(e) => handleZoneSelect(e.target.value)}
+                    required
+                  >
+                    <option value="">Chọn khu vực</option>
+                    {zones.map((zone) => (
+                      <option key={zone.id} value={zone.id}>{zone.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    className="input-rounded"
+                    required
+                    placeholder="Mã ghế"
+                    value={seatForm.seat_number}
+                    onChange={(e) => setSeatForm({ ...seatForm, seat_number: e.target.value })}
+                  />
+                  <label className="action-pill" style={{ padding: '12px 16px' }}>
+                    <input type="checkbox" checked={seatForm.is_maintainance} onChange={(e) => setSeatForm({ ...seatForm, is_maintainance: e.target.checked })} />
+                    Bảo trì
+                  </label>
+                  <div className="form-row">
+                    <input
+                      className="input-rounded"
+                      placeholder="X tự động (kéo ghế)"
+                      value={seatForm.x_position}
+                      disabled
+                    />
+                    <input
+                      className="input-rounded"
+                      placeholder="Y tự động (kéo ghế)"
+                      value={seatForm.y_position}
+                      disabled
+                    />
+                  </div>
+                  <div className="form-row">
+                    <button type="submit" disabled={saving} className="btn-primary">
+                      {activeSeatId ? 'Cập nhật ghế' : 'Tạo ghế'}
+                    </button>
+                    {activeSeatId && (
+                      <button
+                        type="button"
+                        className="button-secondary"
+                        onClick={() => { setActiveSeatId(null); setSeatForm({ seat_number:'', is_maintainance:false, x_position:'', y_position:'' }); }}
+                      >
+                        Hủy
+                      </button>
+                    )}
+                  </div>
+                </form>
+                <p className="dashboard-note">Nếu khu vực có sơ đồ, nhập giá trị X/Y theo phần trăm để ghế nằm đúng vị trí.</p>
+              </div>
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', marginTop: '15px', fontSize: '14px', lineHeight: 1.5 }}>
-              <thead>
-                <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #ccc' }}>
-                  <th style={{ padding:'12px', textAlign:'center', minWidth:'60px' }}>STT</th>
-                  <th style={{ padding:'12px', minWidth:'120px' }}>Ghế</th>
-                  <th style={{ padding:'12px', minWidth:'140px' }}>Người đặt</th>
-                  <th style={{ padding:'12px', minWidth:'160px' }}>Ngày đặt</th>
-                  <th style={{ padding:'12px', minWidth:'170px' }}>Giờ sử dụng</th>
-                  <th style={{ padding:'12px', minWidth:'150px' }}>Trạng thái</th>
-                  <th style={{ padding:'12px', minWidth:'160px', textAlign:'center' }}>Hành động</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredReservations.length === 0 ? (
-                  <tr><td colSpan="7" style={{ padding:'18px', textAlign:'center', color: '#777' }}>Không có yêu cầu đặt chỗ phù hợp.</td></tr>
-                ) : (
-                  filteredReservations.map((r, index) => (
-                    <tr key={r.id} style={{ borderBottom: '1px solid #e6e6e6', background: index % 2 === 0 ? '#ffffff' : '#fbfbfb' }}>
-                      <td style={{ padding:'12px', textAlign:'center', whiteSpace: 'nowrap' }}>{index + 1}</td>
-                      <td style={{ padding:'12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{r.seat?.seat_number || r.seat || 'N/A'}</td>
-                      <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{r.user || 'N/A'}</td>
-                      <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{r.date || '—'}</td>
-                      <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{r.start_time || '—'} - {r.end_time || '—'}</td>
-                      <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>
-                        {r.status === 'booked' && <span style={{ color: '#d39e00', fontWeight:'bold' }}>⏳ Chờ check-in</span>}
-                        {r.status === 'checked_in' && <span style={{ color: '#28a745', fontWeight:'bold' }}>✅ Đang sử dụng</span>}
-                        {r.status === 'completed' && <span style={{ color: '#6c757d', fontWeight:'bold' }}>🔒 Đã check-out</span>}
-                        {![ 'booked', 'checked_in', 'completed' ].includes(r.status) && (
-                          <span style={{ color: 'red', fontWeight: 'bold' }}>{r.status || 'Không xác định'}</span>
-                        )}
-                      </td>
-                      <td style={{ padding:'12px', textAlign:'center' }}>
-                        <div style={{ display: 'inline-flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                          {r.status === 'booked' && (
-                            <button onClick={() => handleUpdateReservation(r.id, 'check_in')} style={{ background: '#28a745', color: 'white', padding: '8px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
-                              Duyệt check-in
-                            </button>
-                          )}
-                          {r.status === 'checked_in' && (
-                            <button onClick={() => handleUpdateReservation(r.id, 'check_out')} style={{ background: '#17a2b8', color: 'white', padding: '8px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight:'bold' }}>
-                              Check-out
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+
+            {selectedZoneId && (
+              <div className="section-block panel" style={{ padding: 20 }}>
+                <h4>Sơ đồ khu vực đã chọn</h4>
+                <p className="dashboard-note">Hệ thống sẽ tự động hiện sơ đồ ghế cho khu vực. Bạn có thể kéo thả ghế ngay cả khi chưa upload ảnh nền.</p>
+                <div
+                  className="panel"
+                  style={{
+                    padding: 0,
+                    borderRadius: 18,
+                    overflow: 'hidden',
+                    position: 'relative',
+                    minHeight: 420,
+                    background: '#f8fafc',
+                    border: '1px solid #e5e7eb',
+                    cursor: 'crosshair',
+                  }}
+                  ref={layoutContainerRef}
+                  onClick={handleLayoutClick}
+                >
+                  {zones.find((zone) => String(zone.id) === String(selectedZoneId))?.layout_image && (
+                    <img
+                      src={getMediaUrl(zones.find((zone) => String(zone.id) === String(selectedZoneId))?.layout_image)}
+                      alt="Sơ đồ khu vực"
+                      style={{ width: '100%', display: 'block', pointerEvents: 'none', userSelect: 'none' }}
+                    />
+                  )}
+                  {zoneSeats.map((seat, index) => {
+                    const status = getAdminSeatStatus(seat);
+                    const dragPos = draggingSeatId === seat.id ? dragPosition : null;
+                    const fallback = getSeatDisplayPosition(seat, index, zoneSeats.length);
+                    const displayX = dragPos ? dragPos.x : (seat.x_position != null && seat.y_position != null ? seat.x_position : fallback.x);
+                    const displayY = dragPos ? dragPos.y : (seat.x_position != null && seat.y_position != null ? seat.y_position : fallback.y);
+                    return (
+                      <button
+                        key={seat.id}
+                        type="button"
+                        className={`seat-marker ${status} ${draggingSeatId === seat.id ? 'dragging' : ''}`}
+                        style={{
+                          position: 'absolute',
+                          left: `${displayX}%`,
+                          top: `${displayY}%`,
+                          transform: 'translate(-50%, -50%)',
+                          cursor: 'grab',
+                        }}
+                        onPointerDown={(e) => handleMarkerPointerDown(seat, e)}
+                        onClick={(e) => { e.stopPropagation(); handleSeatSelect(seat); }}
+                        title={`Ghế ${seat.seat_number} - ${status === 'maintenance' ? 'Bảo trì' : status === 'occupied' ? 'Đang dùng' : status === 'reserved' ? 'Đã đặt' : 'Khả dụng'}`}
+                      >
+                        <span className="seat-icon">
+                          <Icon name={statusIconMap[status]} size={18} />
+                        </span>
+                        <span className="seat-label">{seat.seat_number}</span>
+                      </button>
+                    );
+                  })}
+                  <div className="seat-legend" style={{ position:'absolute', bottom: 14, left: 14, zIndex: 5, background:'rgba(255,255,255,0.92)', padding:'10px 14px', borderRadius: 16, boxShadow:'0 8px 22px rgba(0,0,0,0.1)' }}>
+                    <div><span className="legend-badge available"></span> Trống</div>
+                    <div><span className="legend-badge reserved"></span> Đang chọn</div>
+                    <div><span className="legend-badge occupied"></span> Đang sử dụng</div>
+                    <div><span className="legend-badge maintenance"></span> Bảo trì</div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* --- TAB MƯỢN TRẢ --- */}
       {activeTab === 'LOANS' && (
-        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', border: '1px solid #eee' }}>
-          
-          {/* HEADER & NÚT XUẤT BÁO CÁO */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-            <h3 style={{ margin: 0, color: '#b01e23' }}>Danh sách Phiếu mượn</h3>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={handleExportExcel} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                📊 Xuất Excel
-              </button>
-              <button onClick={handleExportPDF} style={{ padding: '8px 15px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                📄 Xuất PDF
-              </button>
+        <div className="panel">
+          <div className="admin-header" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <h3>Danh sách Phiếu mượn ({filteredLoans.length})</h3>
+              <p className="dashboard-note">
+                Luồng xử lý: <strong>Chờ duyệt</strong> → Duyệt/Từ chối → <strong>Đang mượn</strong> → Người mượn trả sách → <strong>Chờ xác nhận</strong> → Thủ thư chỉnh tiền phạt và Lưu phiếu.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <ExportButtons onExportExcel={handleExportLoansExcel} onExportPDF={handleExportLoansPDF} disabled={filteredLoans.length === 0} />
             </div>
           </div>
 
-          {/* THANH LỌC (FILTER) */}
-          <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', background: '#f9f9f9', padding: '15px', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
-            <input 
-              type="text" 
-              placeholder="🔍 Lọc theo ID / Tên Độc giả..." 
-              value={filterUser}
-              onChange={(e) => setFilterUser(e.target.value)}
-              style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }}
+          <div className="filter-row" style={{ marginBottom: '18px', gap: '12px', alignItems: 'center', display: 'flex', flexWrap: 'wrap' }}>
+            <input
+              className="input-rounded"
+              type="text"
+              placeholder="Tìm theo tên người mượn hoặc mã phiếu..."
+              value={loanFilterText}
+              onChange={(e) => { setLoanPage(1); setLoanFilterText(e.target.value); }}
+              style={{ flex: 1, minWidth: '220px' }}
             />
-            <input 
-              type="text" 
-              placeholder="🔍 Lọc theo Tên sách..." 
-              value={filterBook}
-              onChange={(e) => setFilterBook(e.target.value)}
-              style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }}
-            />
+            <select
+              className="select-rounded"
+              value={loanFilterStatus}
+              onChange={(e) => { setLoanPage(1); setLoanFilterStatus(e.target.value); }}
+              style={{ width: '200px' }}
+            >
+              <option value="all">Tất cả trạng thái</option>
+              <option value="pending">Đang chờ duyệt</option>
+              <option value="borrowed">Đang mượn</option>
+              <option value="overdue">Quá hạn</option>
+              <option value="return_pending">Chờ xác nhận trả</option>
+              <option value="returned">Đã trả</option>
+              <option value="cancelled">Đã hủy</option>
+              <option value="rejected">Đã từ chối</option>
+            </select>
           </div>
 
-          {/* BẢNG DỮ LIỆU ĐÃ LỌC */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', marginTop: '15px', fontSize: '14px', lineHeight: 1.5 }}>
+          <PaginationBar
+            total={filteredLoans.length}
+            page={currentLoanPage}
+            pageSize={loanPageSize}
+            pageCount={loanPageCount}
+            onPageChange={setLoanPage}
+            onPageSizeChange={(size) => { setLoanPageSize(size); setLoanPage(1); }}
+          />
+
+          <table className="dashboard-table">
             <thead>
-              <tr style={{ background: '#f3f4f6', borderBottom: '2px solid #ccc' }}>
-                <th style={{ padding:'12px', textAlign:'center', minWidth:'60px' }}>STT</th>
-                <th style={{ padding:'12px', minWidth:'100px' }}>Mã phiếu</th>
-                <th style={{ padding:'12px', minWidth:'120px' }}>Username</th>
-                <th style={{ padding:'12px', minWidth:'140px' }}>Họ và tên</th>
-                <th style={{ padding:'12px', minWidth:'200px' }}>Sách mượn</th>
-                <th style={{ padding:'12px', minWidth:'120px' }}>Ngày mượn</th>
-                <th style={{ padding:'12px', minWidth:'120px' }}>Trạng thái</th>
-                <th style={{ padding:'12px', minWidth:'120px' }}>Tiền phạt</th>
-                <th style={{ padding:'12px', minWidth:'180px', textAlign:'center' }}>Thao tác</th>
+              <tr>
+                <th>STT</th>
+                <th>Mã phiếu</th>
+                <th>Người mượn</th>
+                <th>Sách</th>
+                <th>Ngày mượn</th>
+                <th>Hạn trả</th>
+                <th>Trạng thái</th>
+                <th>Hành động</th>
               </tr>
             </thead>
             <tbody>
-              {filteredLoans.length > 0 ? filteredLoans.map((loan, index) => (
-                <tr key={loan.id} style={{ borderBottom: '1px solid #e6e6e6', background: index % 2 === 0 ? '#ffffff' : '#fbfbfb' }}>
-                  <td style={{ padding:'12px', textAlign:'center', whiteSpace: 'nowrap' }}>{index + 1}</td>
-                  <td style={{ padding:'12px', fontWeight: 600, whiteSpace: 'nowrap' }}>#{loan.id}</td>
-                  <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{loan.user || 'N/A'}</td>
-                  <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{loan.full_name || 'N/A'}</td>
-                  <td style={{ padding:'12px' }}>
-                    <button
-                      type="button"
-                      onClick={() => openLoanDetailModal(loan)}
-                      style={{ background: 'none', border: 'none', color: '#0056b3', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: '14px' }}
-                    >
-                      {getLoanBookNames(loan) || 'Xem chi tiết phiếu'}
+              {pagedLoans.length > 0 ? pagedLoans.map((loan, i) => (
+                <tr key={loan.id}>
+                  <td>{(currentLoanPage - 1) * loanPageSize + i + 1}</td>
+                  <td>#{loan.id}</td>
+                  <td>{loan.full_name || loan.user}</td>
+                  <td>
+                    <button type="button" className="button-secondary" onClick={() => openLoanDetailModal(loan)}>
+                      Xem
                     </button>
                   </td>
-                  <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>{loan.borrow_date || '—'}</td>
-                  <td style={{ padding:'12px', whiteSpace: 'nowrap' }}>
-                    <strong style={{ color: loan.status === 'returned' ? '#28a745' : '#ffc107' }}>
-                      {loan.status === 'returned' ? '✅ Đã trả' : loan.status === 'borrowed' ? '📖 Đang mượn' : loan.status}
-                    </strong>
+                  <td>{loan.borrow_date || '-'}</td>
+                  <td>{loan.due_date || '-'}</td>
+                  <td>
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '3px 10px',
+                      borderRadius: '12px',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                      background: loan.status === 'pending' ? '#fef5e7'
+                        : loan.status === 'return_pending' ? '#f5eef8'
+                        : loan.status === 'returned' ? '#eafaf1'
+                        : loan.status === 'overdue' ? '#fdedec'
+                        : '#ebf5fb',
+                      color: loan.status === 'pending' ? '#e67e22'
+                        : loan.status === 'return_pending' ? '#8e44ad'
+                        : loan.status === 'returned' ? '#27ae60'
+                        : loan.status === 'overdue' ? '#c0392b'
+                        : '#2980b9',
+                    }}>
+                      {loan.status_display || loanStatusLabelMap[loan.status] || loan.status}
+                    </span>
                   </td>
-                  <td style={{ padding:'12px', fontWeight: 'bold', color: getLoanFineTotal(loan) > 0 ? '#c62828' : '#2e7d32', whiteSpace: 'nowrap' }}>
-                    {Number(getLoanFineTotal(loan) || 0).toLocaleString('vi-VN')} đ
-                  </td>
-                  <td style={{ padding:'12px', textAlign:'center' }}>
-                    <div style={{ display: 'inline-flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                      {loan.status !== 'returned' && (
-                        <button
-                          onClick={() => handleUpdateLoan(loan.id)}
-                          style={{ padding: '6px 12px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
-                        >
-                          Xác nhận Đã Trả
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteLoan(loan.id)}
-                        disabled={saving}
-                        style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor:'pointer', fontWeight:'bold' }}
-                      >
-                        Xóa phiếu
+                  <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {loan.status === 'pending' && (
+                      <>
+                        <button type="button" className="btn-primary" onClick={() => handleLoanApprove(loan.id)}>Duyệt</button>
+                        <button type="button" className="button-secondary" onClick={() => handleLoanReject(loan.id)}>Từ chối</button>
+                      </>
+                    )}
+                    {loan.status === 'return_pending' && (
+                      <button type="button" className="btn-primary" onClick={() => openLoanDetailModal(loan)}>
+                        Xác nhận trả
                       </button>
-                    </div>
+                    )}
+                    <button type="button" className="button-secondary" onClick={() => openLoanDetailModal(loan)}>
+                      Chi tiết
+                    </button>
                   </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: 'center', padding: '18px', color: '#777' }}>
-                    Không tìm thấy phiếu mượn nào phù hợp với bộ lọc.
-                  </td>
+                  <td colSpan={8} style={{ textAlign: 'center', padding: '20px' }}>Không tìm thấy phiếu mượn phù hợp với bộ lọc.</td>
                 </tr>
               )}
             </tbody>
@@ -1204,98 +1555,250 @@ function AdminDashboard() {
         </div>
       )}
 
-      {/* --- TAB NGƯỜI DÙNG --- */}
-      {activeTab === 'USERS' && (
-        <div>
-          <h3>Danh sách Tài khoản (Core)</h3>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-            <thead><tr style={{ background: '#eee' }}><th style={{padding:'10px'}}>STT</th><th style={{padding:'10px'}}>Username</th><th>Họ Tên</th><th>Role</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+      {activeTab === 'RESERVATIONS' && (
+        <div className="panel">
+          <div className="list-section-header">
+            <div>
+              <h3>Đặt chỗ ({filteredReservations.length})</h3>
+              <p className="dashboard-note">Quản lý và xuất báo cáo đặt chỗ ngồi trong thư viện.</p>
+            </div>
+            <ExportButtons
+              onExportExcel={handleExportReservationsExcel}
+              onExportPDF={handleExportReservationsPDF}
+              disabled={filteredReservations.length === 0}
+            />
+          </div>
+          <div className="form-row" style={{ alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+            <input
+              className="input-rounded"
+              placeholder="Tìm theo tên người dùng, ghế, khu vực..."
+              value={reservationFilterText}
+              onChange={(e) => { setReservationPage(1); setReservationFilterText(e.target.value); }}
+            />
+            <select
+              className="select-rounded"
+              value={reservationFilterStatus}
+              onChange={(e) => { setReservationPage(1); setReservationFilterStatus(e.target.value); }}
+            >
+              <option value="all">Tất cả trạng thái</option>
+              <option value="pending">Đang chờ</option>
+              <option value="approved">Đã duyệt</option>
+              <option value="checked_in">Đang ngồi</option>
+              <option value="completed">Hoàn tất</option>
+              <option value="cancelled">Hủy</option>
+              <option value="rejected">Từ chối</option>
+              <option value="booked">Đã đặt</option>
+            </select>
+          </div>
+          <PaginationBar
+            total={filteredReservations.length}
+            page={currentReservationPage}
+            pageSize={reservationPageSize}
+            pageCount={reservationPageCount}
+            onPageChange={setReservationPage}
+            onPageSizeChange={(size) => { setReservationPageSize(size); setReservationPage(1); }}
+          />
+          <table className="dashboard-table">
+            <thead>
+              <tr>
+                <th>STT</th>
+                <th>ID</th>
+                <th>Người dùng</th>
+                <th>Ghế</th>
+                <th>Khu vực</th>
+                <th>Ngày</th>
+                <th>Giờ</th>
+                <th>Trạng thái</th>
+                <th>Hành động</th>
+              </tr>
+            </thead>
             <tbody>
-              {users.map((u, index) => (
-                <tr key={u.id} style={{ borderBottom: '1px solid #ddd' }}>
-                  <td style={{padding:'10px'}}>{index + 1}</td>
-                  <td style={{padding:'10px'}}>{u.username}</td>
-                  <td>{u.full_name}</td>
-                  <td><strong>{u.role || (u.is_superuser ? 'Admin' : 'N/A')}</strong></td>
-                  <td>{u.is_active ? '✅ Hoạt động' : '❌ Đã khóa'}</td>
-                  <td>
-                    <button 
-                      className="btn-inline" 
-                      onClick={() => handleToggleUserStatus(u.id, u.is_active)}
-                      disabled={saving}
-                    >
-                      {u.is_active ? 'Khóa' : 'Mở khóa'}
-                    </button>
+              {pagedReservations.length > 0 ? pagedReservations.map((reservation, i) => (
+                <tr key={reservation.id}>
+                  <td>{(currentReservationPage - 1) * reservationPageSize + i + 1}</td>
+                  <td>{reservation.id}</td>
+                  <td>{reservation.user?.full_name || reservation.user?.username || '-'}</td>
+                  <td>{reservation.seat?.seat_number || '-'}</td>
+                  <td>{reservation.seat?.zone?.name || '-'}</td>
+                  <td>{reservation.date}</td>
+                  <td>{reservation.start_time} - {reservation.end_time}</td>
+                  <td>{reservationStatusLabelMap[reservation.status] || reservation.status}</td>
+                  <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {reservation.status === 'pending' && (
+                      <>
+                        <button type="button" className="btn-primary" onClick={() => handleReservationApprove(reservation.id)}>Duyệt</button>
+                        <button type="button" className="button-secondary" onClick={() => handleReservationReject(reservation.id)}>Từ chối</button>
+                      </>
+                    )}
+                    {reservation.status === 'approved' && (
+                      <span className="badge badge-muted">Chờ đến giờ</span>
+                    )}
+                    {reservation.status === 'checked_in' && (
+                      <span className="badge badge-success">Đang ngồi</span>
+                    )}
+                    {['completed','cancelled','rejected','booked'].includes(reservation.status) && (
+                      <span className="badge badge-muted">{reservation.status}</span>
+                    )}
                   </td>
                 </tr>
-              ))}
+              )) : (
+                <tr><td colSpan={9} className="empty-row">Không tìm thấy đặt chỗ phù hợp.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeTab === 'USERS' && (
+        <div className="panel">
+          <div className="list-section-header">
+            <div>
+              <h3>Người dùng ({filteredUsers.length})</h3>
+              <p className="dashboard-note">Danh sách tài khoản trong hệ thống thư viện.</p>
+            </div>
+            <ExportButtons
+              onExportExcel={handleExportUsersExcel}
+              onExportPDF={handleExportUsersPDF}
+              disabled={filteredUsers.length === 0}
+            />
+          </div>
+          <div className="filter-row" style={{ marginBottom: 16 }}>
+            <input
+              className="input-rounded"
+              placeholder="Tìm theo tên, email, vai trò hoặc mã..."
+              value={userFilterText}
+              onChange={(e) => { setUserPage(1); setUserFilterText(e.target.value); }}
+            />
+          </div>
+          <PaginationBar
+            total={filteredUsers.length}
+            page={currentUserPage}
+            pageSize={userPageSize}
+            pageCount={userPageCount}
+            onPageChange={setUserPage}
+            onPageSizeChange={(size) => { setUserPageSize(size); setUserPage(1); }}
+          />
+          <table className="dashboard-table">
+            <thead>
+              <tr>
+                <th>STT</th>
+                <th>ID</th>
+                <th>Tên đăng nhập</th>
+                <th>Họ tên</th>
+                <th>Email</th>
+                <th>Vai trò</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedUsers.length > 0 ? pagedUsers.map((u, i) => (
+                <tr key={u.id}>
+                  <td>{(currentUserPage - 1) * userPageSize + i + 1}</td>
+                  <td>{u.id}</td>
+                  <td>{u.username}</td>
+                  <td>{u.full_name}</td>
+                  <td>{u.email || '-'}</td>
+                  <td><span className="role-badge">{roleLabelMap[u.role] || u.role}</span></td>
+                </tr>
+              )) : (
+                <tr><td colSpan={6} className="empty-row">Không tìm thấy người dùng phù hợp.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
       )}
 
       {selectedLoan && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <div style={{ width: 'min(900px, 96vw)', maxHeight: '88vh', overflowY: 'auto', background: '#fff', borderRadius: '10px', padding: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ margin: 0, color: '#b01e23' }}>Chi tiết phiếu mượn #{selectedLoan.id}</h3>
-              <button type="button" onClick={closeLoanDetailModal} style={{ border: 'none', background: '#f0f0f0', borderRadius: '4px', padding: '6px 10px', cursor: 'pointer' }}>
-                Đóng
-              </button>
+        <div className="modal-backdrop">
+          <div className="modal-card" style={{ maxWidth: 720 }}>
+            <header>
+              <h3>Chi tiết phiếu mượn #{selectedLoan.id}</h3>
+              <button type="button" className="modal-close" onClick={closeLoanDetailModal}>Đóng</button>
+            </header>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px', padding: '12px', background: '#f8f9fa', borderRadius: '8px' }}>
+              <div><strong>Người mượn:</strong> {selectedLoan.full_name || selectedLoan.user}</div>
+              <div><strong>Trạng thái:</strong> {selectedLoan.status_display || loanStatusLabelMap[selectedLoan.status] || selectedLoan.status}</div>
+              <div><strong>Ngày mượn:</strong> {selectedLoan.borrow_date || '-'}</div>
+              <div><strong>Hạn trả:</strong> {selectedLoan.due_date || '-'}</div>
+              {selectedLoan.return_date && (
+                <div><strong>Ngày trả:</strong> {selectedLoan.return_date}</div>
+              )}
             </div>
 
-            <div style={{ marginBottom: '16px', background: '#f9f9f9', padding: '12px', borderRadius: '6px' }}>
-              <p><strong>Người mượn:</strong> {selectedLoan.full_name || 'N/A'} ({selectedLoan.user || 'N/A'})</p>
-              <p><strong>Ngày mượn:</strong> {selectedLoan.borrow_date} | <strong>Hạn trả:</strong> {selectedLoan.due_date}</p>
-              <p><strong>Trạng thái:</strong> {selectedLoan.status === 'returned' ? 'Đã trả' : 'Đang mượn'}</p>
-            </div>
+            {selectedLoan.status === 'pending' && (
+              <div style={{ marginBottom: '14px', padding: '10px 14px', background: '#fef5e7', borderRadius: '8px', color: '#e67e22' }}>
+                Phiếu đang chờ duyệt. Bấm <strong>Duyệt</strong> hoặc <strong>Từ chối</strong> ở danh sách.
+              </div>
+            )}
+            {selectedLoan.status === 'return_pending' && (
+              <div style={{ marginBottom: '14px', padding: '10px 14px', background: '#f5eef8', borderRadius: '8px', color: '#8e44ad' }}>
+                Người mượn đã trả sách. Vui lòng kiểm tra và điều chỉnh tiền phạt (gợi ý theo số ngày quá hạn), sau đó bấm <strong>Lưu phiếu</strong> để hoàn tất.
+              </div>
+            )}
+            {['borrowed', 'overdue'].includes(selectedLoan.status) && (
+              <div style={{ marginBottom: '14px', padding: '10px 14px', background: '#ebf5fb', borderRadius: '8px', color: '#2980b9' }}>
+                Phiếu đang mượn. Người mượn sẽ tự thao tác trả sách trên trang cá nhân.
+              </div>
+            )}
 
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '14px' }}>
+            <table className="dashboard-table">
               <thead>
-                <tr style={{ background: '#eee' }}>
-                  <th style={{ padding: '10px', textAlign: 'left' }}>STT</th>
-                  <th style={{ padding: '10px', textAlign: 'left' }}>Sách</th>
-                  <th style={{ padding: '10px', textAlign: 'left' }}>SL mượn</th>
-                  <th style={{ padding: '10px', textAlign: 'left' }}>Tiền phạt (đ)</th>
+                <tr>
+                  <th>STT</th>
+                  <th>Sách</th>
+                  <th>SL mượn</th>
+                  <th>SL đã trả</th>
+                  <th>Tiền phạt (VNĐ)</th>
                 </tr>
               </thead>
               <tbody>
-                {(selectedLoan.loan_details || []).map((detail, index) => (
-                  <tr key={detail.id} style={{ borderBottom: '1px solid #ddd' }}>
-                    <td style={{ padding: '10px' }}>{index + 1}</td>
-                    <td style={{ padding: '10px' }}>{detail.book?.title || 'N/A'}</td>
-                    <td style={{ padding: '10px' }}>{detail.quantity || 1}</td>
-                    <td style={{ padding: '10px' }}>
-                      <input
-                        type="number"
-                        min="0"
-                        value={loanDetailFineMap[detail.id] ?? 0}
-                        onChange={(e) => setLoanDetailFineMap({ ...loanDetailFineMap, [detail.id]: e.target.value })}
-                        style={{ width: '140px', padding: '6px', border: '1px solid #ccc', borderRadius: '4px' }}
-                      />
+                {(selectedLoan.loan_details || []).map((d, idx) => (
+                  <tr key={d.id}>
+                    <td>{idx + 1}</td>
+                    <td>{d.book?.title || ''}</td>
+                    <td>{d.quantity}</td>
+                    <td>{d.returned_quantity ?? 0}</td>
+                    <td>
+                      {selectedLoan.status === 'return_pending' || selectedLoan.status === 'returned' ? (
+                        <input
+                          className="input-rounded"
+                          type="number"
+                          min="0"
+                          value={loanDetailFineMap[d.id] ?? d.fine_amounts ?? 0}
+                          onChange={(e) => setLoanDetailFineMap({ ...loanDetailFineMap, [d.id]: e.target.value })}
+                        />
+                      ) : (
+                        <span style={{ color: '#999' }}>-</span>
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button type="button" onClick={closeLoanDetailModal} style={{ padding: '8px 12px', border: 'none', background: '#6c757d', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>
-                Hủy
-              </button>
-              <button
-                type="button"
-                disabled={loanDetailSaving}
-                onClick={handleSaveLoanDetails}
-                style={{ padding: '8px 12px', border: 'none', background: '#b01e23', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-              >
-                {loanDetailSaving ? 'Đang lưu...' : (selectedLoan.status === 'returned' ? 'Lưu tiền phạt' : 'Lưu và xác nhận đã trả')}
-              </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+              {selectedLoan.status === 'pending' && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" className="btn-primary" onClick={() => { handleLoanApprove(selectedLoan.id); closeLoanDetailModal(); }}>Duyệt phiếu</button>
+                  <button type="button" className="button-secondary" onClick={() => { handleLoanReject(selectedLoan.id); closeLoanDetailModal(); }}>Từ chối</button>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 10, marginLeft: 'auto' }}>
+                {selectedLoan.status === 'return_pending' && (
+                  <button type="button" className="btn-primary" onClick={handleSaveLoanDetails} disabled={loanDetailSaving}>
+                    {loanDetailSaving ? 'Đang lưu...' : 'Lưu phiếu'}
+                  </button>
+                )}
+                {selectedLoan.status === 'returned' && (
+                  <button type="button" className="btn-primary" onClick={handleSaveLoanDetails} disabled={loanDetailSaving}>
+                    {loanDetailSaving ? 'Đang lưu...' : 'Cập nhật tiền phạt'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }

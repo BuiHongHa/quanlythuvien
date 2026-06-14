@@ -75,5 +75,26 @@ class ChangePasswordView(APIView):
         return Response({"detail": "Đổi mật khẩu thành công."}, status=status.HTTP_200_OK)
 
 
+class ForgotPasswordView(APIView):
+    def post(self, request):
+        username = request.data.get('username')
+        email = request.data.get('email')
+        phone = request.data.get('phone')
+        new_password = request.data.get('new_password')
+
+        if not username or not email or not phone or not new_password:
+            return Response({"detail": "Vui lòng điền đầy đủ thông tin."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(username=username, email=email, phone=phone)
+            if len(new_password) < 6:
+                return Response({"detail": "Mật khẩu mới phải có ít nhất 6 ký tự."}, status=status.HTTP_400_BAD_REQUEST)
+            user.set_password(new_password)
+            user.save()
+            return Response({"detail": "Khôi phục mật khẩu thành công! Vui lòng đăng nhập lại."}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({"detail": "Thông tin xác thực không đúng. Kiểm tra lại tên đăng nhập, email và số điện thoại."}, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 

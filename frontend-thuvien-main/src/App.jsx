@@ -7,6 +7,8 @@ import Login from './Login';
 import Register from './Register';
 import SeatBooking from './SeatBooking';
 import AdminDashboard from './AdminDashboard';
+import PaginationBar from './components/PaginationBar';
+import { paginate } from './utils/pagination';
 import { clearAuthStorage, getAuthRole, isAdminRole } from './auth';
 import { Icon } from './components/Icons';
 
@@ -42,6 +44,8 @@ function Home() {
   const [borrowDuration, setBorrowDuration] = useState(14)
   const [borrowMessage, setBorrowMessage] = useState({ type: '', text: '' })
   const [borrowing, setBorrowing] = useState(false)
+  const [bookPage, setBookPage] = useState(1)
+  const [bookPageSize, setBookPageSize] = useState(12)
 
   const loadHomeData = () => {
     return Promise.all([
@@ -76,6 +80,13 @@ function Home() {
 
     return matchesSearch && matchesCategory;
   });
+
+  const booksPageData = paginate(filteredBooks, bookPage, bookPageSize);
+  const pagedBooks = booksPageData.items;
+
+  useEffect(() => {
+    setBookPage(1);
+  }, [searchTerm, selectedCategory]);
 
   const addBookToCart = (book) => {
     if (!book?.is_available || Number(book?.available_quantity || 0) <= 0) {
@@ -120,7 +131,7 @@ function Home() {
     setBorrowing(true);
     setBorrowMessage({ type: '', text: '' });
     try {
-      await axios.post('http://127.0.0.1:8000/api/loans/loans/', {
+      const response = await axios.post('http://127.0.0.1:8000/api/loans/loans/', {
         items: borrowCart.map((item) => ({ book: item.book, quantity: Number(item.quantity) || 1 })),
         borrow_duration: Number(borrowDuration) || 14
       }, {
@@ -129,7 +140,7 @@ function Home() {
           'Content-Type': 'application/json'
         }
       });
-      setBorrowMessage({ type: 'success', text: '✅ Tạo phiếu mượn nhiều sách thành công!' });
+      setBorrowMessage({ type: 'success', text: `✅ ${response.data?.message || 'Yêu cầu mượn sách đã được gửi và đang chờ duyệt!'}` });
       setBorrowCart([]);
       await loadHomeData();
     } catch (borrowError) {
@@ -205,15 +216,27 @@ function Home() {
             <option value={30}>30 ngày</option>
           </select>
           <button type="button" disabled={borrowing} onClick={handleBorrowManyBooks} style={{ padding: '10px 14px', border: 'none', borderRadius: '6px', background: '#b01e23', color: '#fff', cursor: 'pointer', fontWeight: 'bold' }}>
-            {borrowing ? 'Đang gửi...' : 'Tạo phiếu mượn nhiều sách'}
+            {borrowing ? 'Đang gửi...' : 'Gửi yêu cầu mượn sách'}
           </button>
         </div>
       </div>
       
+      {filteredBooks.length > 0 && (
+        <PaginationBar
+          total={filteredBooks.length}
+          page={booksPageData.currentPage}
+          pageSize={bookPageSize}
+          pageCount={booksPageData.pageCount}
+          onPageChange={setBookPage}
+          onPageSizeChange={(size) => { setBookPageSize(size); setBookPage(1); }}
+          pageSizeOptions={[8, 12, 16, 24]}
+          className="home-pagination"
+        />
+      )}
+
       <div className="book-grid">
-        {/* Kiểm tra: Nếu có sách sau khi lọc thì mới hiện, không thì báo trống */}
         {filteredBooks && filteredBooks.length > 0 ? (
-          filteredBooks.map(book => (
+          pagedBooks.map(book => (
             <Link to={`/book/${book.id}`} key={book.id} className="book-card-link">
               <div className="book-card">
                 {book?.cover_image && (
@@ -313,7 +336,7 @@ function BookDetail() {
       };
 
       // 1. Gửi request mượn sách lên Backend
-      await axios.post('http://127.0.0.1:8000/api/loans/loans/', borrowData, {
+      const response = await axios.post('http://127.0.0.1:8000/api/loans/loans/', borrowData, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -322,7 +345,7 @@ function BookDetail() {
 
       setMessage({ 
         type: 'success', 
-        text: `✅ Mượn sách "${book.title}" thành công! Hạn trả: ${borrowForm.borrow_duration} ngày.` 
+        text: `✅ ${response.data?.message || 'Yêu cầu mượn sách đã được gửi và đang chờ thủ thư duyệt.'}` 
       });
       
       setTimeout(() => handleCloseModal(), 2000);
@@ -433,7 +456,7 @@ function BookDetail() {
 
               <div className="form-actions">
                 <button type="submit" className="btn-submit" disabled={isLoading}>
-                  {isLoading ? 'Đang xử lý...' : 'Xác nhận mượn'}
+                  {isLoading ? 'Đang gửi...' : 'Gửi yêu cầu mượn'}
                 </button>
                 <button type="button" className="btn-cancel" onClick={handleCloseModal} disabled={isLoading}>
                   Hủy
@@ -457,11 +480,61 @@ function App() {
   const isLoggedIn = Boolean(accessToken);
   const isAdmin = isAdminRole(role);
 
+  const [overdueLoans, setOverdueLoans] = useState([]);
+  const [overdueReservations, setOverdueReservations] = useState([]);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const fetchNotifications = async () => {
+      try {
+        const config = {
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        };
+
+        const [loansRes, resRes] = await Promise.all([
+          axios.get('http://127.0.0.1:8000/api/loans/loans/', config).catch(() => ({ data: [] })),
+          axios.get('http://127.0.0.1:8000/api/library/reservations/', config).catch(() => ({ data: [] }))
+        ]);
+
+        const allLoans = loansRes.data || [];
+        const allRes = resRes.data || [];
+
+        const overdueL = allLoans.filter(l => l.status === 'overdue');
+        setOverdueLoans(overdueL);
+
+        const now = new Date();
+        const todayStr = now.toLocaleDateString('sv-SE');
+        const currentTimeStr = now.toTimeString().split(' ')[0].substring(0, 5);
+
+        const overdueR = allRes.filter(r => {
+          if (!['pending', 'approved', 'checked_in'].includes(r.status)) return false;
+          if (r.date < todayStr) return true;
+          if (r.date === todayStr && (r.end_time || '').substring(0, 5) < currentTimeStr) return true;
+          return false;
+        });
+        setOverdueReservations(overdueR);
+
+      } catch (err) {
+        console.error("Lỗi khi tải thông báo quá hạn:", err);
+      }
+    };
+
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, accessToken]);
+
   // Hàm xử lý khi bấm nút Đăng xuất
   const handleLogout = () => {
     clearAuthStorage();
     window.location.href = '/';            // Đá về trang chủ và tải lại trang
   };
+
+  const totalNotifications = overdueLoans.length + overdueReservations.length;
 
   return (
     <BrowserRouter>
@@ -483,6 +556,107 @@ function App() {
               Trang chủ
             </NavLink>
           </li>
+
+          {isLoggedIn && (
+            <li className="nav-notification-container" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => setNotificationOpen(!notificationOpen)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'white',
+                  cursor: 'pointer',
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '5px',
+                }}
+                title="Thông báo quá hạn"
+              >
+                <Icon name="bell" size={20} />
+                {totalNotifications > 0 && (
+                  <span style={{
+                    position: 'absolute',
+                    top: '-6px',
+                    right: '-6px',
+                    backgroundColor: '#ef4444',
+                    color: 'white',
+                    fontSize: '10px',
+                    fontWeight: 'bold',
+                    borderRadius: '50%',
+                    width: '18px',
+                    height: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 0 0 2px #b01e23'
+                  }}>
+                    {totalNotifications}
+                  </span>
+                )}
+              </button>
+
+              {notificationOpen && (
+                <div style={{
+                  position: 'absolute',
+                  top: '40px',
+                  right: '0',
+                  backgroundColor: 'white',
+                  borderRadius: '12px',
+                  boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
+                  border: '1px solid #e2e8f0',
+                  width: '320px',
+                  padding: '16px',
+                  zIndex: 1000,
+                  color: '#1e293b',
+                  textAlign: 'left'
+                }}>
+                  <h4 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                    🔔 Thông báo quá hạn/quá giờ
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '240px', overflowY: 'auto' }}>
+                    {totalNotifications === 0 ? (
+                      <p style={{ margin: 0, fontSize: '13px', color: '#64748b', textAlign: 'center', padding: '10px' }}>
+                        Tuyệt vời! Không có phiếu nào bị quá hạn.
+                      </p>
+                    ) : (
+                      <>
+                        {overdueLoans.length > 0 && (
+                          <div style={{ padding: '8px 10px', backgroundColor: '#fff5f5', borderRadius: '8px', borderLeft: '4px solid #ef4444' }}>
+                            <p style={{ margin: 0, fontSize: '13px', fontWeight: '500', color: '#991b1b' }}>
+                              Có {overdueLoans.length} phiếu mượn sách quá hạn trả!
+                            </p>
+                            <Link 
+                              to={isAdmin ? "/admin" : "/dashboard"} 
+                              onClick={() => setNotificationOpen(false)}
+                              style={{ fontSize: '12px', color: '#b91c1c', fontWeight: 'bold', textDecoration: 'underline', marginTop: '4px', display: 'inline-block' }}
+                            >
+                              Xem và xử lý trả sách
+                            </Link>
+                          </div>
+                        )}
+                        {overdueReservations.length > 0 && (
+                          <div style={{ padding: '8px 10px', backgroundColor: '#fffbeb', borderRadius: '8px', borderLeft: '4px solid #f59e0b' }}>
+                            <p style={{ margin: 0, fontSize: '13px', fontWeight: '500', color: '#92400e' }}>
+                              Có {overdueReservations.length} phiếu đặt chỗ ngồi quá giờ!
+                            </p>
+                            <Link 
+                              to={isAdmin ? "/admin" : "/seats"} 
+                              onClick={() => setNotificationOpen(false)}
+                              style={{ fontSize: '12px', color: '#d97706', fontWeight: 'bold', textDecoration: 'underline', marginTop: '4px', display: 'inline-block' }}
+                            >
+                              Xem và quản lý chỗ ngồi
+                            </Link>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </li>
+          )}
           
           {isLoggedIn ? (
             isAdmin ? (

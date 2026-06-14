@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios'; // Công cụ gọi API
+import axios from 'axios';
 import { Link } from 'react-router-dom';
 import './App.css'; 
 import { clearAuthStorage, getAuthRole, isAdminRole } from './auth';
 import { Icon } from './components/Icons';
+import PaginationBar from './components/PaginationBar';
+import { paginate } from './utils/pagination';
 
 function Profile() {
   const role = getAuthRole();
@@ -11,6 +13,7 @@ function Profile() {
 
   // Biến chứa danh sách sách thật kéo từ Backend về
   const [borrowedBooks, setBorrowedBooks] = useState([]);
+  const [reservations, setReservations] = useState([]);
   const [isReturning, setIsReturning] = useState(null); // Track which loan is being returned
   const [activeTab, setActiveTab] = useState(isAdmin ? 'profile' : 'loans'); // Tab: loans | profile | password
   
@@ -36,6 +39,37 @@ function Profile() {
   });
 
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [loanPage, setLoanPage] = useState(1);
+  const [loanPageSize, setLoanPageSize] = useState(8);
+
+  const loanStatusLabelMap = {
+    pending: 'Đang chờ duyệt',
+    borrowed: 'Đang mượn',
+    overdue: 'Quá hạn',
+    return_pending: 'Chờ xác nhận trả',
+    returned: 'Đã trả',
+    cancelled: 'Đã hủy',
+    rejected: 'Đã từ chối',
+  };
+
+  const getLoanStatusStyle = (status) => {
+    const styles = {
+      pending: { color: '#e67e22', bg: '#fef5e7' },
+      borrowed: { color: '#2980b9', bg: '#ebf5fb' },
+      overdue: { color: '#c0392b', bg: '#fdedec' },
+      return_pending: { color: '#8e44ad', bg: '#f5eef8' },
+      returned: { color: '#27ae60', bg: '#eafaf1' },
+      rejected: { color: '#7f8c8d', bg: '#f4f6f7' },
+      cancelled: { color: '#7f8c8d', bg: '#f4f6f7' },
+    };
+    return styles[status] || { color: '#333', bg: '#f9f9f9' };
+  };
+
+  const canReturnLoan = (status) => ['borrowed', 'overdue'].includes(status);
+
+  const sortedLoans = [...borrowedBooks].sort((a, b) => String(b.borrow_date || '').localeCompare(String(a.borrow_date || '')) || (b.id || 0) - (a.id || 0));
+  const loansPageData = paginate(sortedLoans, loanPage, loanPageSize);
+  const pagedLoans = loansPageData.items;
 
   const logoutAndRedirect = () => {
     clearAuthStorage();
@@ -107,6 +141,18 @@ function Profile() {
     }
   };
 
+  const fetchMyReservations = async () => {
+    try {
+      const response = await authRequest({
+        method: 'get',
+        url: 'http://127.0.0.1:8000/api/library/reservations/'
+      });
+      setReservations(response.data || []);
+    } catch (error) {
+      console.error("Lỗi khi kéo dữ liệu đặt chỗ:", error);
+    }
+  };
+
   const fetchMyProfile = async () => {
     try {
       const response = await authRequest({
@@ -132,6 +178,7 @@ function Profile() {
   useEffect(() => {
     if (!isAdmin) {
       fetchMyBooks();
+      fetchMyReservations();
     }
     fetchMyProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,17 +186,17 @@ function Profile() {
 
   // ✅ Hàm xử lý trả sách
   const handleReturnBook = async (loanId) => {
+    if (!window.confirm('Bạn xác nhận đã trả sách cho thư viện? Thủ thư sẽ xác nhận tiền phạt (nếu có) sau.')) return;
     setIsReturning(loanId);
     try {
-      await authRequest({
+      const response = await authRequest({
         method: 'patch',
         url: `http://127.0.0.1:8000/api/loans/loans/${loanId}/return_book/`,
         data: {}
       });
       
-      // ✅ Reload data sau khi trả sách
       fetchMyBooks();
-      alert('✅ Trả sách thành công!');
+      alert(response.data?.message || '✅ Đã gửi yêu cầu trả sách. Vui lòng chờ thủ thư xác nhận.');
     } catch (error) {
       console.error('Lỗi khi trả sách:', error);
       alert('❌ Trả sách thất bại! ' + (error.response?.data?.error || ''));
@@ -204,8 +251,54 @@ function Profile() {
     }
   };
 
+  const overdueLoansCount = borrowedBooks.filter((l) => l.status === 'overdue').length;
+
+  const overdueReservationsCount = reservations.filter((r) => {
+    if (!['pending', 'approved', 'checked_in'].includes(r.status)) return false;
+    const now = new Date();
+    const todayStr = now.toLocaleDateString('sv-SE');
+    const currentTimeStr = now.toTimeString().split(' ')[0].substring(0, 5);
+    if (r.date < todayStr) return true;
+    if (r.date === todayStr && (r.end_time || '').substring(0, 5) < currentTimeStr) return true;
+    return false;
+  }).length;
+
   return (
     <div className="container">
+      {!isAdmin && (overdueLoansCount > 0 || overdueReservationsCount > 0) && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+          marginBottom: '20px',
+          padding: '14px 18px',
+          backgroundColor: '#fff5f5',
+          border: '1px solid #feb2b2',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(254, 178, 178, 0.15)',
+          textAlign: 'left'
+        }}>
+          <h4 style={{ margin: 0, color: '#c53030', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px' }}>
+            <span style={{ fontSize: '18px' }}>⚠️</span> Bạn có thông báo quan trọng cần xử lý:
+          </h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '14px' }}>
+            {overdueLoansCount > 0 && (
+              <span style={{ color: '#9b2c2c', fontWeight: 500 }}>
+                • Bạn đang có <strong>{overdueLoansCount}</strong> phiếu mượn sách quá hạn trả. Vui lòng hoàn trả sách sớm để tránh tích lũy tiền phạt!
+              </span>
+            )}
+            {overdueReservationsCount > 0 && (
+              <span style={{ color: '#9b2c2c', fontWeight: 500 }}>
+                • Bạn có <strong>{overdueReservationsCount}</strong> phiếu đặt chỗ ngồi đã quá giờ sử dụng chưa được hoàn tất/check-out! 
+                <Link to="/seats" style={{ color: '#c53030', fontWeight: 'bold', marginLeft: '8px', textDecoration: 'underline' }}>
+                  Quản lý đặt chỗ
+                </Link>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '2px solid #ddd' }}>
         {!isAdmin && (
@@ -224,7 +317,7 @@ function Profile() {
               gap: '8px'
             }}
           >
-            <Icon name="book" size={18} />Sách Đang Mượn
+            <Icon name="book" size={18} />Phiếu mượn
           </button>
         )}
         <button 
@@ -280,70 +373,101 @@ function Profile() {
         <p><strong>Vai trò:</strong> {profileData.role || 'reader'}</p>
       </div>
 
-      <h3 style={{ textAlign: 'left', marginTop: '40px', display: 'inline-flex', alignItems: 'center', gap: '10px' }}><Icon name="book" size={20} />Sách đang mượn</h3>
+      <h3 style={{ textAlign: 'left', marginTop: '40px', display: 'inline-flex', alignItems: 'center', gap: '10px' }}><Icon name="book" size={20} />Phiếu mượn của tôi</h3>
+      <p style={{ textAlign: 'left', color: '#666', marginTop: '8px' }}>
+        Luồng mượn trả: <strong>Chờ duyệt</strong> → <strong>Đang mượn</strong> → <strong>Trả sách</strong> → Thủ thư xác nhận tiền phạt
+      </p>
       
       {borrowedBooks.length > 0 ? (
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '15px' }}>
+        <>
+          <PaginationBar
+            total={sortedLoans.length}
+            page={loansPageData.currentPage}
+            pageSize={loanPageSize}
+            pageCount={loansPageData.pageCount}
+            onPageChange={setLoanPage}
+            onPageSizeChange={(size) => { setLoanPageSize(size); setLoanPage(1); }}
+            pageSizeOptions={[5, 8, 12, 20]}
+          />
+        <table className="profile-table">
           <thead>
-            <tr style={{ background: '#b01e23', color: 'white' }}>
-              <th style={{ padding: '12px', border: '1px solid #ddd' }}>Tên sách</th>
-              <th style={{ padding: '12px', border: '1px solid #ddd' }}>Ngày mượn</th>
-              <th style={{ padding: '12px', border: '1px solid #ddd' }}>Hạn trả</th>
-              <th style={{ padding: '12px', border: '1px solid #ddd' }}>Trạng thái</th>
-              <th style={{ padding: '12px', border: '1px solid #ddd' }}>Tiền phạt</th>
-              <th style={{ padding: '12px', border: '1px solid #ddd' }}>Thao tác</th>
+            <tr>
+              <th>Mã phiếu</th>
+              <th>Sách</th>
+              <th>Ngày mượn</th>
+              <th>Hạn trả</th>
+              <th>Trạng thái</th>
+              <th>Tiền phạt</th>
+              <th>Thao tác</th>
             </tr>
           </thead>
           <tbody>
-            {borrowedBooks.map((loan) => (
-              // ✓ FIX: Loop qua loan_details array để lấy book info
-              loan.loan_details && loan.loan_details.length > 0 ? (
-                loan.loan_details.map((detail, index) => (
-                  <tr key={index} style={{ textAlign: 'center', background: '#fff' }}>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'left' }}>
-                      {detail.book?.title || "Tên sách"}
-                    </td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>{loan.borrow_date || "N/A"}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>{loan.due_date || "N/A"}</td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', color: loan.status === 'returned' ? '#27ae60' : '#e74c3c', fontWeight: 'bold' }}>
-                      {loan.status === 'borrowed' ? '📕 Đã mượn' : loan.status === 'returned' ? '✅ Đã trả' : '⚠️ Quá hạn'}
-                    </td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd', fontWeight: 'bold', color: Number(detail.fine_amounts || 0) > 0 ? '#c0392b' : '#2c3e50' }}>
-                      {Number(detail.fine_amounts || 0).toLocaleString('vi-VN')} đ
-                    </td>
-                    <td style={{ padding: '12px', border: '1px solid #ddd' }}>
-                      {loan.status === 'borrowed' ? (
-                        <button 
-                          onClick={() => handleReturnBook(loan.id)}
-                          disabled={isReturning === loan.id}
-                          style={{
-                            background: isReturning === loan.id ? '#ccc' : '#27ae60',
-                            color: 'white',
-                            border: 'none',
-                            padding: '8px 15px',
-                            borderRadius: '4px',
-                            cursor: isReturning === loan.id ? 'not-allowed' : 'pointer',
-                            fontWeight: 'bold'
-                          }}
-                        >
-                          {isReturning === loan.id ? '⏳ Đang xử lý...' : '📦 Trả sách'}
-                        </button>
-                      ) : (
-                        <span style={{ color: '#999' }}>-</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              ) : (
+            {pagedLoans.map((loan) => {
+              const statusStyle = getLoanStatusStyle(loan.status);
+              const bookTitles = (loan.loan_details || [])
+                .map((d) => `${d.book?.title || 'Sách'} (x${d.quantity})`)
+                .join(', ') || 'Không có sách';
+              const totalFine = (loan.loan_details || []).reduce(
+                (sum, d) => sum + Number(d.fine_amounts || 0), 0
+              );
+
+              return (
                 <tr key={loan.id} style={{ textAlign: 'center', background: '#fff' }}>
-                  <td colSpan="6" style={{ padding: '12px', border: '1px solid #ddd' }}>Không có thông tin sách</td>
+                  <td style={{ padding: '12px', border: '1px solid #ddd', fontWeight: 'bold' }}>#{loan.id}</td>
+                  <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'left' }}>{bookTitles}</td>
+                  <td style={{ padding: '12px', border: '1px solid #ddd' }}>{loan.borrow_date || 'N/A'}</td>
+                  <td style={{ padding: '12px', border: '1px solid #ddd' }}>{loan.due_date || 'N/A'}</td>
+                  <td style={{ padding: '12px', border: '1px solid #ddd' }}>
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '4px 10px',
+                      borderRadius: '12px',
+                      fontWeight: 'bold',
+                      fontSize: '13px',
+                      color: statusStyle.color,
+                      background: statusStyle.bg,
+                    }}>
+                      {loan.status_display || loanStatusLabelMap[loan.status] || loan.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px', border: '1px solid #ddd', fontWeight: 'bold', color: totalFine > 0 ? '#c0392b' : '#2c3e50' }}>
+                    {loan.status === 'return_pending' || loan.status === 'returned'
+                      ? `${totalFine.toLocaleString('vi-VN')} đ`
+                      : loan.status === 'overdue' ? 'Chưa trả' : '-'}
+                  </td>
+                  <td style={{ padding: '12px', border: '1px solid #ddd' }}>
+                    {canReturnLoan(loan.status) ? (
+                      <button 
+                        onClick={() => handleReturnBook(loan.id)}
+                        disabled={isReturning === loan.id}
+                        style={{
+                          background: isReturning === loan.id ? '#ccc' : '#27ae60',
+                          color: 'white',
+                          border: 'none',
+                          padding: '8px 15px',
+                          borderRadius: '4px',
+                          cursor: isReturning === loan.id ? 'not-allowed' : 'pointer',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        {isReturning === loan.id ? '⏳ Đang gửi...' : '📦 Trả sách'}
+                      </button>
+                    ) : loan.status === 'pending' ? (
+                      <span style={{ color: '#e67e22', fontSize: '13px' }}>Chờ thủ thư duyệt</span>
+                    ) : loan.status === 'return_pending' ? (
+                      <span style={{ color: '#8e44ad', fontSize: '13px' }}>Chờ thủ thư xác nhận</span>
+                    ) : (
+                      <span style={{ color: '#999' }}>-</span>
+                    )}
+                  </td>
                 </tr>
-              )
-            ))}
+              );
+            })}
           </tbody>
         </table>
+        </>
       ) : (
-        <p style={{ textAlign: 'left', color: '#666' }}>Bạn hiện không mượn cuốn sách nào hoặc chưa có dữ liệu từ hệ thống.</p>
+        <p style={{ textAlign: 'left', color: '#666' }}>Bạn chưa có phiếu mượn nào.</p>
       )}
         </>
       )}
