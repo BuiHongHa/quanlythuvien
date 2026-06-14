@@ -34,13 +34,13 @@ function Register() {
 
     // Kiểm tra password khớp
     if (formData.password !== formData.password_confirm) {
-      setErrorMessage('Mật khẩu không khớp!');
+      setErrorMessage('Mật khẩu nhập lại không khớp!');
       return;
     }
 
     // Kiểm tra fields bắt buộc
     if (!formData.username || !formData.password || !formData.full_name) {
-      setErrorMessage('Vui lòng điền đầy đủ thông tin!');
+      setErrorMessage('Vui lòng điền đầy đủ các thông tin bắt buộc!');
       return;
     }
 
@@ -56,194 +56,155 @@ function Register() {
       });
 
       clearAuthStorage();
-      setSuccessMessage('✅ Đăng ký thành công! Chuyển sang đăng nhập...');
+      setSuccessMessage('Đăng ký tài khoản thành công! Đang chuyển sang đăng nhập...');
       setTimeout(() => navigate('/login'), 2000);
     } catch (error) {
       const errorText = error.response?.status === 404
         ? 'Sai endpoint đăng ký hoặc backend chưa chạy.'
         : error.response?.status === 500
-          ? 'Backend đang lỗi nội bộ (AssertionError). Vui lòng báo nhóm backend sửa serializer đăng ký.'
+          ? 'Backend đang lỗi nội bộ. Vui lòng thử lại sau.'
           : error.response?.data?.detail ||
             error.response?.data?.error ||
             error.response?.data?.username?.[0] ||
             'Đăng ký thất bại!';
-      setErrorMessage('❌ ' + errorText);
+      setErrorMessage(errorText);
     }
   };
 
   return (
-    <div className="container" style={{ maxWidth: '500px', marginTop: '40px' }}>
-      <div style={{ padding: '30px', background: '#fff', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)' }}>
-        <h2 style={{ textAlign: 'center', color: '#b01e23', marginBottom: '25px' }}>
-          📝 Đăng Ký Tài Khoản
-        </h2>
+    <div className="auth-container">
+      <div className="auth-card register-card">
+        <div className="auth-header-wrapper">
+          <span className="auth-logo">📝</span>
+          <h2 className="auth-heading">Đăng Ký Tài Khoản</h2>
+          <p className="auth-subtitle">Tạo tài khoản độc giả thư viện PTIT</p>
+        </div>
 
         {errorMessage && (
-          <div style={{ background: '#ffebee', color: '#c62828', padding: '12px', borderRadius: '6px', marginBottom: '15px', textAlign: 'center' }}>
-            {errorMessage}
+          <div className="auth-alert auth-alert-error">
+            <span>⚠️ {errorMessage}</span>
           </div>
         )}
 
         {successMessage && (
-          <div style={{ background: '#e8f5e9', color: '#2e7d32', padding: '12px', borderRadius: '6px', marginBottom: '15px', textAlign: 'center' }}>
-            {successMessage}
+          <div className="auth-alert auth-alert-success">
+            <span>✅ {successMessage}</span>
           </div>
         )}
 
-        <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          
-          {/* Username */}
-          <div>
-            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
-              👤 Tên đăng nhập:
-            </label>
-            <input
-              type="text"
-              name="username"
-              placeholder="VD: nongmanhdung123"
-              value={formData.username}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
-              required
-            />
+        <form onSubmit={handleRegister} className="auth-form">
+          <div className="auth-form-grid">
+            
+            {/* Tên đăng nhập */}
+            <div className="auth-input-group">
+              <label>👤 Tên đăng nhập <span style={{ color: '#b01e23' }}>*</span></label>
+              <input
+                type="text"
+                name="username"
+                placeholder="VD: nongmanhdung123"
+                value={formData.username}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
+            {/* Họ và tên */}
+            <div className="auth-input-group">
+              <label>👨 Họ và tên <span style={{ color: '#b01e23' }}>*</span></label>
+              <input
+                type="text"
+                name="full_name"
+                placeholder="VD: Nông Mạnh Dũng"
+                value={formData.full_name}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
+            {/* Email */}
+            <div className="auth-input-group">
+              <label>📧 Email</label>
+              <input
+                type="email"
+                name="email"
+                placeholder="VD: name@ptit.edu.vn"
+                value={formData.email}
+                onChange={handleChange}
+              />
+            </div>
+
+            {/* Số điện thoại */}
+            <div className="auth-input-group">
+              <label>📱 Số điện thoại</label>
+              <input
+                type="tel"
+                name="phone"
+                placeholder="VD: 0123456789"
+                value={formData.phone}
+                onChange={handleChange}
+              />
+            </div>
+
+            {/* Ngày sinh */}
+            <div className="auth-input-group">
+              <label>🎂 Ngày sinh</label>
+              <input
+                type="date"
+                name="date_of_birth"
+                value={formData.date_of_birth}
+                onChange={handleChange}
+              />
+            </div>
+
+            {/* Địa chỉ */}
+            <div className="auth-input-group">
+              <label>🏠 Địa chỉ</label>
+              <input
+                type="text"
+                name="address"
+                placeholder="VD: Hà Nội"
+                value={formData.address}
+                onChange={handleChange}
+              />
+            </div>
+
+            {/* Mật khẩu */}
+            <div className="auth-input-group">
+              <label>🔐 Mật khẩu (ít nhất 6 ký tự) <span style={{ color: '#b01e23' }}>*</span></label>
+              <input
+                type="password"
+                name="password"
+                placeholder="Nhập mật khẩu..."
+                value={formData.password}
+                onChange={handleChange}
+                required
+                minLength="6"
+              />
+            </div>
+
+            {/* Xác nhận mật khẩu */}
+            <div className="auth-input-group">
+              <label>✅ Xác nhận mật khẩu <span style={{ color: '#b01e23' }}>*</span></label>
+              <input
+                type="password"
+                name="password_confirm"
+                placeholder="Nhập lại mật khẩu..."
+                value={formData.password_confirm}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
           </div>
 
-          {/* Full Name */}
-          <div>
-            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
-              👨 Họ và tên: <span style={{ color: '#999' }}>(bắt buộc)</span>
-            </label>
-            <input
-              type="text"
-              name="full_name"
-              placeholder="VD: Nông Mạnh Dũng"
-              value={formData.full_name}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
-              required
-            />
-          </div>
-
-          {/* Email */}
-          <div>
-            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
-              📧 Email: <span style={{ color: '#999' }}>(tuỳ chọn)</span>
-            </label>
-            <input
-              type="email"
-              name="email"
-              placeholder="VD: nongmanhdung@ptit.edu.vn"
-              value={formData.email}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
-            />
-          </div>
-
-          {/* Phone */}
-          <div>
-            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
-              📱 Số điện thoại: <span style={{ color: '#999' }}>(tuỳ chọn)</span>
-            </label>
-            <input
-              type="tel"
-              name="phone"
-              placeholder="VD: 0123456789"
-              value={formData.phone}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
-            />
-          </div>
-
-          {/* Address */}
-          <div>
-            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
-              🏠 Địa chỉ: <span style={{ color: '#999' }}>(tuỳ chọn)</span>
-            </label>
-            <input
-              type="text"
-              name="address"
-              placeholder="VD: Hà Nội"
-              value={formData.address}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
-            />
-          </div>
-
-          {/* Date of birth */}
-          <div>
-            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
-              🎂 Ngày sinh: <span style={{ color: '#999' }}>(tuỳ chọn)</span>
-            </label>
-            <input
-              type="date"
-              name="date_of_birth"
-              value={formData.date_of_birth}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
-            />
-          </div>
-
-          {/* Password */}
-          <div>
-            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
-              🔐 Mật khẩu: <span style={{ color: '#999' }}>(6+ ký tự)</span>
-            </label>
-            <input
-              type="password"
-              name="password"
-              placeholder="Nhập mật khẩu..."
-              value={formData.password}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
-              required
-              minLength="6"
-            />
-          </div>
-
-          {/* Confirm Password */}
-          <div>
-            <label style={{ fontWeight: 'bold', color: '#333', display: 'block', marginBottom: '5px' }}>
-              ✅ Xác nhận mật khẩu:
-            </label>
-            <input
-              type="password"
-              name="password_confirm"
-              placeholder="Nhập lại mật khẩu..."
-              value={formData.password_confirm}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
-              required
-            />
-          </div>
-
-          {/* Submit Button */}
-          <button 
-            type="submit" 
-            style={{ 
-              padding: '14px', 
-              background: '#b01e23', 
-              color: 'white', 
-              border: 'none', 
-              borderRadius: '6px', 
-              fontSize: '1.1rem', 
-              fontWeight: 'bold', 
-              cursor: 'pointer', 
-              marginTop: '10px',
-              transition: '0.3s'
-            }}
-            onMouseOver={(e) => e.target.style.background = '#8b1619'}
-            onMouseOut={(e) => e.target.style.background = '#b01e23'}
-          >
+          <button type="submit" className="btn-primary" style={{ marginTop: '12px' }}>
             Tạo Tài Khoản
           </button>
         </form>
 
-        {/* Link to Login */}
-        <p style={{ textAlign: 'center', marginTop: '20px', color: '#666' }}>
+        <p className="auth-footer">
           Đã có tài khoản? 
-          <Link to="/login" style={{ color: '#b01e23', textDecoration: 'none', fontWeight: 'bold', marginLeft: '5px' }}>
-            Đăng nhập ngay
-          </Link>
+          <Link to="/login">Đăng nhập ngay</Link>
         </p>
       </div>
     </div>

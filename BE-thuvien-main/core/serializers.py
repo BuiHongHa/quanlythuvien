@@ -50,3 +50,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['full_name'] = getattr(user, 'full_name', '')
         token['is_staff'] = user.is_staff
         return token
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        data['role'] = self.user.role
+        data['username'] = self.user.username
+        data['full_name'] = self.user.full_name
+        return data

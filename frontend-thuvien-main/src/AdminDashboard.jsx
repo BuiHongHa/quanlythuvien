@@ -10,7 +10,6 @@ import { getAuthHeaders } from './auth';
 const roleLabelMap = {
   reader: 'Độc giả',
   librarian: 'Thủ thư',
-  manager: 'Quản lý',
   admin: 'Quản trị',
   staff: 'Nhân viên',
 };

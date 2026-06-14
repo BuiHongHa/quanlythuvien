@@ -51,12 +51,12 @@ class LoanView(viewsets.ModelViewSet):
     
     def _is_librarian(self, user):
         role = str(getattr(user, 'role', '') or '').strip().lower()
-        return user.is_superuser or user.is_staff or role in ('librarian', 'manager', 'admin', 'staff')
+        return user.is_superuser or user.is_staff or role in ('librarian', 'admin', 'staff')
 
     def get_queryset(self):
         """Librarian xem được tất cả, reader chỉ thấy loan của mình."""
         role = str(getattr(self.request.user, 'role', '') or '').strip().lower()
-        if self.request.user.is_superuser or self.request.user.is_staff or role in ('librarian', 'manager', 'admin', 'staff'):
+        if self.request.user.is_superuser or self.request.user.is_staff or role in ('librarian', 'admin', 'staff'):
             return Loan.objects.all().order_by('-borrow_date','-id')
         return Loan.objects.filter(user=self.request.user).order_by('-borrow_date','-id'   )
 

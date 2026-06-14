@@ -38,7 +38,7 @@ export async function refreshAccessToken() {
 export function normalizeRole(role) {
   const value = String(role || '').trim().toLowerCase();
 
-  if (['librarian', 'admin', 'manager', 'staff'].includes(value)) {
+  if (['librarian', 'admin', 'staff'].includes(value)) {
     return 'librarian';
   }
 
@@ -60,7 +60,7 @@ export function getAuthRole() {
 
 export function isAdminRole(role) {
   const normalized = normalizeRole(role);
-  return normalized === 'librarian' || normalized === 'manager' || normalized === 'admin' || normalized === 'staff';
+  return normalized === 'librarian' || normalized === 'admin' || normalized === 'staff';
 }
 
 export async function getAuthHeaders() {

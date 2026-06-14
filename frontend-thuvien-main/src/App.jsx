@@ -758,7 +758,7 @@ function App() {
             <Route
               path="/admin"
               element={
-                <RoleRoute isLoggedIn={isLoggedIn} role={role} allowedRoles={['librarian', 'manager', 'admin', 'staff']} fallbackPath="/dashboard">
+                <RoleRoute isLoggedIn={isLoggedIn} role={role} allowedRoles={['librarian', 'admin', 'staff']} fallbackPath="/dashboard">
                   <AdminDashboard />
                 </RoleRoute>
               }
